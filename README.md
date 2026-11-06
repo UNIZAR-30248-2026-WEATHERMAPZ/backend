@@ -685,21 +685,23 @@ Vite.
 
 ## Rutas con pesos (PBI-6)
 
-Cada usuario tiene sus rutas guardadas con un peso de 0 a 100 % para la sombra y otro para el sol, y
-el tiempo extra máximo respecto a la ruta rápida, de 0 a 40 % (ADR-023). La primera vez que las lista
-recibe una copia de las tres predefinidas: Rápida (0/0), Sombreada (50/0) y Soleada (0/50), las tres
-con un 25 % de tiempo extra.
+Cada usuario tiene sus rutas guardadas con un peso de 0 a 100 % para la sombra, otro para el sol y
+otro para el viento (PBI-8.2), y el tiempo extra máximo respecto a la ruta rápida, de 0 a 40 %
+(ADR-023). La primera vez que las lista recibe una copia de las tres predefinidas: Rápida (0/0/0),
+Sombreada (50/0/0) y Soleada (0/50/0), las tres con un 25 % de tiempo extra y el viento a 0. Las
+rutas guardadas antes de la PBI-8.2 tienen el viento a 0 (migración
+`20261106000001-add-route-profile-wind-weight`).
 
 ### `GET /api/route-profiles`
 
 ```json
-{ "profiles": [{ "id": 1, "name": "Rápida", "presetKey": "fastest", "weights": { "shade": 0, "sun": 0 }, "maxDetourPercentage": 25 }] }
+{ "profiles": [{ "id": 1, "name": "Rápida", "presetKey": "fastest", "weights": { "shade": 0, "sun": 0, "wind": 0 }, "maxDetourPercentage": 25 }] }
 ```
 
 ### `POST /api/route-profiles` y `PUT /api/route-profiles/:id`
 
-Cuerpo `{ "name": "Verano", "weights": { "shade": 80, "sun": 0 }, "maxDetourPercentage": 10 }`
-(`maxDetourPercentage` es opcional; por defecto, 25). Responden `201` o `200` con
+Cuerpo `{ "name": "Verano", "weights": { "shade": 80, "sun": 0, "wind": 20 }, "maxDetourPercentage": 10 }`
+(un peso que falta cuenta como 0; `maxDetourPercentage` es opcional; por defecto, 25). Responden `201` o `200` con
 `{ "profile": ... }`. Errores: `400` con `fields` si el nombre (1 a 40 caracteres) o un peso no son
 válidos, `409` si el nombre ya existe para ese usuario o tiene ya 20 rutas, y `404` si la ruta no es
 suya.
@@ -710,13 +712,34 @@ Responde `204`. Borra la ruta solo para ese usuario, también si es predefinida.
 
 ### `POST /api/routes/weighted`
 
-El mismo cuerpo que `POST /api/routes/shaded` más `"weights": { "shade": 80, "sun": 0 }` y, opcional,
-`"maxDetourPercentage": 10` (de 0 a 40; por defecto, 25). Devuelve
-`{ "comparison": { "status", "weights", "fastest", "selected", "additionalDurationSeconds",
-"shadeChangePercentagePoints", "candidatesEvaluated", "strategy" } }`. `selected` es la alternativa
-elegida con esos pesos o `null`; `status` es `selected`, `no_better_alternative`,
-`insufficient_exposure_data`, `sun_below_horizon`, `sun_too_low` o, con los pesos a 0,
-`fastest_only` (solo se pide la ruta rápida).
+El mismo cuerpo que `POST /api/routes/shaded` más `"weights": { "shade": 80, "sun": 0, "wind": 0 }`
+y, opcionales, `"maxDetourPercentage": 10` (de 0 a 40; por defecto, 25) y
+`"wind": { "speedKmh": 40, "directionDeg": 300 }`. Devuelve
+`{ "comparison": { "status", "weights", "wind", "fastest", "selected", "additionalDurationSeconds",
+"shadeChangePercentagePoints", "windChangePoints", "candidatesEvaluated", "strategy" } }`.
+`selected` es la alternativa elegida con esos pesos o `null`; `status` es `selected`,
+`no_better_alternative`, `insufficient_exposure_data`, `sun_below_horizon`, `sun_too_low` o, con los
+pesos a 0, `fastest_only` (solo se pide la ruta rápida).
+
+#### El viento en las rutas (PBI-8.2)
+
+- **Coste** (ADR-023 y ADR-025):
+  `duración × (1 + (peso_sombra × %sol + peso_sol × %sombra + peso_viento × exposición_viento) / 10000)`.
+  La mejora mínima de 5 puntos se mide sobre la media de esos tres valores ponderada por los pesos.
+- **Exposición al viento de cada ruta** (`fastest.windExposure` y `selected.windExposure`, de 0 a
+  100): media ponderada por longitud de los trozos rectos de la geometría de la ruta, con el sentido
+  de marcha. Viento de cara: `|cos θ|` completo; a favor: `0,5 × |cos θ|`; cruzado: 0. Se multiplica
+  por la intensidad de la PBI-8.1 (0 por debajo de 10 km/h, 1 desde 50 km/h).
+- **Viento usado** (`wind`): el de la petición (`source: "request"`) o, sin él, el actual de
+  Open-Meteo (`source: "open-meteo"`, con `time`), aunque la ruta se pida para otra fecha u hora.
+  Si Open-Meteo falla y el viento no pesa, `wind` es `null` y cada `windExposure` es
+  `unavailable` con `reason: "weather_unavailable"`; si el viento pesa, se devuelve el error
+  (`502`/`504`).
+- **Solo viento:** si la sombra y el sol están a 0, no se calculan sombras (`exposure.reason` es
+  `not_requested`) y la ruta funciona también de noche.
+- `windChangePoints` es la exposición al viento de `selected` menos la de `fastest` (negativa si
+  está más resguardada). `shadeChangePercentagePoints` es `null` si no hay sombras.
+- `wind` no válido (velocidad de 0 a 200 km/h, dirección de 0 a 360°) → `400` con `fields`.
 
 ## Contrato de la ruta rápida (PBI-2)
 
@@ -864,6 +887,26 @@ códigos controlados que `/api/routes/fastest`; si el cálculo de sombras supera
 pero no añade migraciones ni dependencias.
 
 ## Checklist de verificación manual
+
+### PBI-8.2 - El viento en el cálculo de rutas
+
+Con el servidor arrancado, `$token` como en la PBI-3.3 y la migración aplicada (`npm run db:migrate`).
+
+- [ ] `GET /api/route-profiles` devuelve las rutas con `weights.wind` (0 en las ya guardadas).
+- [ ] `POST /api/route-profiles` con `"weights": { "wind": 80 }` guarda la ruta con `wind: 80`;
+      con `"wind": 101` → `400` con `fields.wind`.
+- [ ] `POST /api/routes/weighted` con `"weights": { "wind": 100 }`, un viento fuerte en contra
+      (`"wind": { "speedKmh": 50, "directionDeg": <rumbo del trayecto> }`) y un trayecto con
+      alternativas: `fastest.windExposure.exposure` alto y, si hay una alternativa más resguardada
+      dentro del tiempo extra, `status: "selected"` con `windChangePoints` negativo.
+- [ ] La misma petición con `"weights": { "wind": 0 }` → `fastest_only`.
+- [ ] Con el viento en sentido contrario (`directionDeg` + 180) la exposición de la ruta rápida
+      baja a la mitad aproximadamente.
+- [ ] Con solo viento y una hora de noche (`"time": "23:00"`) también se calcula (no hay
+      `sun_below_horizon`).
+- [ ] Sin `wind` en la petición, `comparison.wind.source` es `open-meteo`.
+- [ ] `npm run ci` y `npm run test:integration -- src/tests/integration/routeProfiles.test.js`
+      pasan con la BD de test levantada.
 
 ### PBI-8.1 - Exposición al viento por tramo
 

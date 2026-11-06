@@ -1,8 +1,8 @@
 const { httpError } = require('../../utils/httpError');
 
-// Each weight is a percentage: how much the user cares about that factor (ADR-023). Wind and
-// vegetation will be added here as new factors.
-const WEIGHT_FACTORS = ['shade', 'sun'];
+// Each weight is a percentage: how much the user cares about that factor (ADR-023). Wind came with
+// PBI-8.2 (ADR-025); vegetation will be added here as a new factor.
+const WEIGHT_FACTORS = ['shade', 'sun', 'wind'];
 const MAX_WEIGHT = 100;
 const MAX_PROFILE_NAME_LENGTH = 40;
 // How much longer than the fastest route the chosen one may be (ADR-023). 40 % is the default
@@ -12,13 +12,18 @@ const MAX_DETOUR_PERCENTAGE = 40;
 
 // Every user starts with a copy of these; "Sombreada" keeps the cost of ADR-014.
 const PRESET_PROFILES = [
-  { presetKey: 'fastest', name: 'Rápida', weights: { shade: 0, sun: 0 } },
-  { presetKey: 'shaded', name: 'Sombreada', weights: { shade: 50, sun: 0 } },
-  { presetKey: 'sunny', name: 'Soleada', weights: { shade: 0, sun: 50 } }
+  { presetKey: 'fastest', name: 'Rápida', weights: { shade: 0, sun: 0, wind: 0 } },
+  { presetKey: 'shaded', name: 'Sombreada', weights: { shade: 50, sun: 0, wind: 0 } },
+  { presetKey: 'sunny', name: 'Soleada', weights: { shade: 0, sun: 50, wind: 0 } }
 ].map((preset) => ({ ...preset, maxDetourPercentage: DEFAULT_MAX_DETOUR_PERCENTAGE }));
 
 function hasEnvironmentalWeight(weights) {
   return WEIGHT_FACTORS.some((factor) => weights[factor] > 0);
+}
+
+// Shadows are only needed when shade or sun weigh: a wind-only route also works at night.
+function hasShadeWeight(weights) {
+  return weights.shade > 0 || weights.sun > 0;
 }
 
 function parseWeights(weights) {
@@ -70,6 +75,7 @@ module.exports = {
   PRESET_PROFILES,
   WEIGHT_FACTORS,
   hasEnvironmentalWeight,
+  hasShadeWeight,
   parseMaxDetour,
   parseProfileInput,
   parseWeights

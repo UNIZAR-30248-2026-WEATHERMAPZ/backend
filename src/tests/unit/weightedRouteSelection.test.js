@@ -31,14 +31,14 @@ describe('route weights', () => {
       true
     );
     expect(PRESET_PROFILES.map(({ name, weights }) => [name, weights])).toEqual([
-      ['Rápida', { shade: 0, sun: 0 }],
-      ['Sombreada', { shade: 50, sun: 0 }],
-      ['Soleada', { shade: 0, sun: 50 }]
+      ['Rápida', { shade: 0, sun: 0, wind: 0 }],
+      ['Sombreada', { shade: 50, sun: 0, wind: 0 }],
+      ['Soleada', { shade: 0, sun: 50, wind: 0 }]
     ]);
   });
 
   it('accepts whole percentages and treats a missing factor as 0', () => {
-    expect(parseWeights({ shade: 100 })).toEqual({ shade: 100, sun: 0 });
+    expect(parseWeights({ shade: 100 })).toEqual({ shade: 100, sun: 0, wind: 0 });
     expect(hasEnvironmentalWeight({ shade: 0, sun: 0 })).toBe(false);
     expect(hasEnvironmentalWeight({ shade: 0, sun: 1 })).toBe(true);
   });
@@ -57,7 +57,7 @@ describe('route weights', () => {
   it('validates the name of a saved route', () => {
     expect(parseProfileInput({ name: '  Verano ', weights: { shade: 80 } })).toEqual({
       name: 'Verano',
-      weights: { shade: 80, sun: 0 },
+      weights: { shade: 80, sun: 0, wind: 0 },
       maxDetourPercentage: 25
     });
     expect(
@@ -163,5 +163,56 @@ describe('weighted route selection', () => {
 
   it('requires candidates', () => {
     expect(() => selectWeightedRoute([], { shade: 50, sun: 0 })).toThrow(TypeError);
+  });
+});
+
+describe('weighted route selection with wind (PBI-8.2)', () => {
+  const windy = (id, duration, exposure, shadePercentage = null) => ({
+    ...route(id, duration, shadePercentage, shadePercentage === null ? 'unavailable' : 'available'),
+    windExposure:
+      exposure === null
+        ? { status: 'unavailable', exposure: null }
+        : { status: 'available', exposure }
+  });
+  // Fastest straight into the wind and a sheltered alternative 10 % longer.
+  const windCandidates = [windy('fast', 600, 90), windy('sheltered', 660, 30)];
+  const onlyWind = (wind) => ({ shade: 0, sun: 0, wind });
+
+  it('chooses the sheltered alternative with a high wind weight, without shadow data', () => {
+    expect(selectWeightedRoute(windCandidates, onlyWind(100))).toMatchObject({
+      status: 'selected',
+      selected: { id: 'sheltered' },
+      additionalDurationSeconds: 60,
+      shadeChangePercentagePoints: null,
+      windChangePoints: -60
+    });
+  });
+
+  it('keeps the fastest route with a low wind weight', () => {
+    // 600 × 1.045 = 627 is cheaper than 660 × 1.015 = 669.9.
+    expect(selectWeightedRoute(windCandidates, onlyWind(5)).selected).toBeNull();
+  });
+
+  it('adds the wind to the cost like shade and sun', () => {
+    const both = windy('r', 600, 40, 30);
+
+    expect(weightedCost(both, { shade: 50, sun: 0, wind: 50 })).toBeCloseTo(
+      600 * (1 + (50 * 70 + 50 * 40) / 10000)
+    );
+    expect(exposurePenalty(both, { shade: 50, sun: 0, wind: 50 })).toBeCloseTo(55);
+  });
+
+  it('needs the wind exposure of the fastest route when wind weighs', () => {
+    expect(
+      selectWeightedRoute([windy('fast', 600, null), windy('other', 620, 10)], onlyWind(50))
+    ).toMatchObject({ status: 'insufficient_exposure_data', selected: null });
+  });
+
+  it('ignores the wind exposure when wind does not weigh', () => {
+    const routes = [windy('fast', 600, null, 20), windy('shade', 680, null, 85)];
+
+    expect(selectWeightedRoute(routes, { shade: 50, sun: 0, wind: 0 }).selected).toMatchObject({
+      id: 'shade'
+    });
   });
 });

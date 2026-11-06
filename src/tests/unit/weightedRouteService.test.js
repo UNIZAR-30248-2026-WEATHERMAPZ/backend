@@ -31,7 +31,9 @@ describe('weighted route service', () => {
   const exposureCalculator = jest.fn();
   const solarCalculator = jest.fn();
   const fastestRouteCalculator = jest.fn();
+  const weather = jest.fn();
   const dependencies = {
+    weather,
     alternativesProvider: routesProvider,
     routeSegmentRepository: { findSegmentsForRoutes },
     exposureCalculator,
@@ -42,6 +44,8 @@ describe('weighted route service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     solarCalculator.mockReturnValue(solarPosition);
+    // Calm by default: the wind does not change the PBI-6 cases.
+    weather.mockResolvedValue({ windSpeed: 5, windDirection: 0, time: '2026-06-21T14:00' });
     // A sunny fastest route and a shaded alternative 10 % longer.
     routesProvider.mockResolvedValue([
       { geometry: geometry(), distance: 1000, duration: 600 },
@@ -152,5 +156,147 @@ describe('weighted route service', () => {
     ).rejects.toMatchObject({ status: 400 });
     expect(routesProvider).not.toHaveBeenCalled();
     expect(fastestRouteCalculator).not.toHaveBeenCalled();
+  });
+
+  describe('wind (PBI-8.2)', () => {
+    // The fastest route goes straight north; the alternative, 10 % longer, east and then north.
+    const straightNorth = {
+      type: 'LineString',
+      coordinates: [
+        [-0.88, 41.65],
+        [-0.88, 41.66]
+      ]
+    };
+    const eastThenNorth = {
+      type: 'LineString',
+      coordinates: [
+        [-0.88, 41.65],
+        [-0.87, 41.65],
+        [-0.87, 41.66]
+      ]
+    };
+    const northWind = { speedKmh: 50, directionDeg: 0 };
+
+    beforeEach(() => {
+      routesProvider.mockResolvedValue([
+        { geometry: straightNorth, distance: 1000, duration: 600 },
+        { geometry: eastThenNorth, distance: 1100, duration: 660 }
+      ]);
+    });
+
+    it('avoids the headwind with a high wind weight and does not calculate shadows', async () => {
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { wind: 100 }, wind: northWind },
+        dependencies
+      );
+
+      expect(result).toMatchObject({
+        status: 'selected',
+        weights: { shade: 0, sun: 0, wind: 100 },
+        wind: { speedKmh: 50, directionDeg: 0, source: 'request', time: null },
+        selected: { duration: 660, windExposure: { status: 'available' } },
+        shadeChangePercentagePoints: null
+      });
+      expect(result.fastest.windExposure.exposure).toBeCloseTo(100);
+      expect(result.selected.windExposure.exposure).toBeLessThan(60);
+      expect(result.windChangePoints).toBeLessThan(-40);
+      expect(findSegmentsForRoutes).not.toHaveBeenCalled();
+      expect(exposureCalculator).not.toHaveBeenCalled();
+      expect(weather).not.toHaveBeenCalled();
+    });
+
+    it('keeps the fastest route with the wind weight at 0', async () => {
+      fastestRouteCalculator.mockResolvedValue({
+        geometry: straightNorth,
+        distance: 1000,
+        duration: 600
+      });
+
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { wind: 0 }, wind: northWind },
+        dependencies
+      );
+
+      expect(result).toMatchObject({ status: 'fastest_only', selected: null });
+      expect(result.fastest.windExposure.exposure).toBeCloseTo(100);
+    });
+
+    it('minds a tailwind less: with the same weight it only avoids the headwind', async () => {
+      const weights = { wind: 30 };
+      const headwind = await calculateWeightedRouteComparison(
+        { ...input, weights, wind: northWind },
+        dependencies
+      );
+      const tailwind = await calculateWeightedRouteComparison(
+        { ...input, weights, wind: { speedKmh: 50, directionDeg: 180 } },
+        dependencies
+      );
+
+      expect(headwind.status).toBe('selected');
+      expect(tailwind.status).toBe('no_better_alternative');
+      expect(tailwind.fastest.windExposure.exposure).toBeCloseTo(50);
+    });
+
+    it('does not count a crosswind', async () => {
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { wind: 100 }, wind: { speedKmh: 50, directionDeg: 90 } },
+        dependencies
+      );
+
+      expect(result.fastest.windExposure.exposure).toBeCloseTo(0, 1);
+      expect(result.status).toBe('no_better_alternative');
+    });
+
+    it('uses the current Open-Meteo wind without a wind in the request', async () => {
+      weather.mockResolvedValue({ windSpeed: 50, windDirection: 0, time: '2026-11-06T12:00' });
+
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { wind: 100 } },
+        dependencies
+      );
+
+      expect(result.wind).toEqual({
+        speedKmh: 50,
+        directionDeg: 0,
+        source: 'open-meteo',
+        time: '2026-11-06T12:00'
+      });
+      expect(result.status).toBe('selected');
+    });
+
+    it('still compares shade when Open-Meteo fails and wind does not weigh', async () => {
+      weather.mockRejectedValue(Object.assign(new Error('down'), { status: 502 }));
+
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { shade: 50 } },
+        dependencies
+      );
+
+      expect(result).toMatchObject({ status: 'selected', wind: null });
+      expect(result.fastest.windExposure).toMatchObject({
+        status: 'unavailable',
+        reason: 'weather_unavailable'
+      });
+    });
+
+    it('fails when Open-Meteo fails and wind weighs', async () => {
+      weather.mockRejectedValue(Object.assign(new Error('down'), { status: 502 }));
+
+      await expect(
+        calculateWeightedRouteComparison({ ...input, weights: { wind: 50 } }, dependencies)
+      ).rejects.toMatchObject({ status: 502 });
+      expect(routesProvider).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid wind before spending provider quota', async () => {
+      await expect(
+        calculateWeightedRouteComparison(
+          { ...input, weights: { wind: 50 }, wind: { speedKmh: -1, directionDeg: 0 } },
+          dependencies
+        )
+      ).rejects.toMatchObject({ status: 400 });
+      expect(routesProvider).not.toHaveBeenCalled();
+      expect(weather).not.toHaveBeenCalled();
+    });
   });
 });

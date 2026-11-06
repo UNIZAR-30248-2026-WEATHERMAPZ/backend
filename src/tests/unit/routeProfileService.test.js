@@ -12,7 +12,11 @@ describe('route profile service', () => {
     deleteForUser: jest.fn()
   };
   const service = createRouteProfileService(repository);
-  const input = { name: 'Verano', weights: { shade: 80, sun: 0 }, maxDetourPercentage: 25 };
+  const input = {
+    name: 'Verano',
+    weights: { shade: 80, sun: 0, wind: 0 },
+    maxDetourPercentage: 25
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();

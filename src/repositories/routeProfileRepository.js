@@ -4,7 +4,15 @@ const { PRESET_PROFILES } = require('../domain/routes/routeWeights');
 const { httpError } = require('../utils/httpError');
 const { sequelize, RouteProfile, User } = require('./models');
 
-const ATTRIBUTES = ['id', 'name', 'presetKey', 'shadeWeight', 'sunWeight', 'maxDetourPercentage'];
+const ATTRIBUTES = [
+  'id',
+  'name',
+  'presetKey',
+  'shadeWeight',
+  'sunWeight',
+  'windWeight',
+  'maxDetourPercentage'
+];
 const DUPLICATE_NAME = 'Ya tienes una ruta con ese nombre.';
 
 function toProfile(row) {
@@ -12,10 +20,16 @@ function toProfile(row) {
     id: row.id,
     name: row.name,
     presetKey: row.presetKey,
-    weights: { shade: row.shadeWeight, sun: row.sunWeight },
+    weights: { shade: row.shadeWeight, sun: row.sunWeight, wind: row.windWeight },
     maxDetourPercentage: row.maxDetourPercentage
   };
 }
+
+const weightColumns = (weights) => ({
+  shadeWeight: weights.shade,
+  sunWeight: weights.sun,
+  windWeight: weights.wind ?? 0
+});
 
 function withDuplicateName(operation) {
   return operation.catch((error) => {
@@ -41,8 +55,7 @@ async function seedPresets(userId) {
         userId,
         name,
         presetKey,
-        shadeWeight: weights.shade,
-        sunWeight: weights.sun,
+        ...weightColumns(weights),
         maxDetourPercentage
       })),
       { transaction, ignoreDuplicates: true }
@@ -71,8 +84,7 @@ async function createForUser(userId, { name, weights, maxDetourPercentage }) {
     RouteProfile.create({
       userId,
       name,
-      shadeWeight: weights.shade,
-      sunWeight: weights.sun,
+      ...weightColumns(weights),
       maxDetourPercentage
     })
   );
@@ -82,7 +94,7 @@ async function createForUser(userId, { name, weights, maxDetourPercentage }) {
 async function updateForUser(userId, id, { name, weights, maxDetourPercentage }) {
   const [updated] = await withDuplicateName(
     RouteProfile.update(
-      { name, shadeWeight: weights.shade, sunWeight: weights.sun, maxDetourPercentage },
+      { name, ...weightColumns(weights), maxDetourPercentage },
       { where: { id, userId } }
     )
   );

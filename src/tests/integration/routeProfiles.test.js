@@ -24,9 +24,9 @@ describe('route profiles (PostgreSQL)', () => {
     ]);
 
     expect(first.map(({ name, presetKey, weights }) => [name, presetKey, weights])).toEqual([
-      ['Rápida', 'fastest', { shade: 0, sun: 0 }],
-      ['Sombreada', 'shaded', { shade: 50, sun: 0 }],
-      ['Soleada', 'sunny', { shade: 0, sun: 50 }]
+      ['Rápida', 'fastest', { shade: 0, sun: 0, wind: 0 }],
+      ['Sombreada', 'shaded', { shade: 50, sun: 0, wind: 0 }],
+      ['Soleada', 'sunny', { shade: 0, sun: 50, wind: 0 }]
     ]);
     expect(again).toEqual(first);
     expect(other).toHaveLength(3);
@@ -79,6 +79,12 @@ describe('route profiles (PostgreSQL)', () => {
     });
     expect(edited.maxDetourPercentage).toBe(40);
     expect(edited).toMatchObject({ id: summer.id, name: 'Verano fuerte', weights: { shade: 100 } });
+    const windy = await routeProfileRepository.updateForUser(ana.id, summer.id, {
+      name: 'Cierzo',
+      weights: { shade: 0, sun: 0, wind: 70 },
+      maxDetourPercentage: 25
+    });
+    expect(windy.weights).toEqual({ shade: 0, sun: 0, wind: 70 });
     await expect(
       routeProfileRepository.updateForUser(ana.id, summer.id, {
         name: 'Sombreada',
@@ -121,5 +127,21 @@ describe('route profiles (PostgreSQL)', () => {
         `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight) VALUES (${ana.id}, 'Mal', 101, 0)`
       )
     ).rejects.toThrow();
+    await expect(
+      sequelize.query(
+        `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight, wind_weight) VALUES (${ana.id}, 'Mal', 0, 0, 101)`
+      )
+    ).rejects.toThrow();
+  });
+
+  it('gives a wind weight of 0 to routes saved without one', async () => {
+    const ana = await newUser('ana@correo.es');
+    await sequelize.query(
+      `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight) VALUES (${ana.id}, 'Antigua', 30, 0)`
+    );
+
+    const [old] = await routeProfileRepository.listForUser(ana.id);
+
+    expect(old).toMatchObject({ name: 'Antigua', weights: { shade: 30, sun: 0, wind: 0 } });
   });
 });

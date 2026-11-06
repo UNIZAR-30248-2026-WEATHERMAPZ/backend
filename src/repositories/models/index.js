@@ -97,6 +97,7 @@ const RouteProfile = sequelize.define(
     presetKey: DataTypes.STRING(20),
     shadeWeight: { type: DataTypes.SMALLINT, allowNull: false },
     sunWeight: { type: DataTypes.SMALLINT, allowNull: false },
+    windWeight: { type: DataTypes.SMALLINT, allowNull: false, defaultValue: 0 },
     maxDetourPercentage: { type: DataTypes.SMALLINT, allowNull: false, defaultValue: 25 }
   },
   { underscored: true, timestamps: true, tableName: 'route_profiles' }

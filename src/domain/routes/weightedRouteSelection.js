@@ -3,20 +3,49 @@
 const MAX_DURATION_FACTOR = 1.25;
 const MIN_IMPROVEMENT_PERCENTAGE_POINTS = 5;
 
-// Percentage of the route exposed to what the weights penalise: sun for shade, shade for sun.
+const shadowValue = (route, key) =>
+  route?.exposure?.status === 'available' ? route.exposure[key] : null;
+
+// What each weight penalises, from 0 to 100: sun for shade, shade for sun and the wind exposure of
+// the walking direction for wind (ADR-025). null when the route has no data for it.
+const FACTOR_PENALTIES = {
+  shade: (route) => shadowValue(route, 'sunPercentage'),
+  sun: (route) => shadowValue(route, 'shadePercentage'),
+  wind: (route) =>
+    route?.windExposure?.status === 'available' ? route.windExposure.exposure : null
+};
+
+const weightedFactors = (weights) =>
+  Object.keys(FACTOR_PENALTIES).filter((factor) => weights[factor] > 0);
+
+// A route can only be compared with the data of every factor that weighs.
+function hasRequiredExposure(route, weights) {
+  return weightedFactors(weights).every((factor) => FACTOR_PENALTIES[factor](route) !== null);
+}
+
+function weightedSum(route, weights) {
+  return weightedFactors(weights).reduce(
+    (sum, factor) => sum + weights[factor] * FACTOR_PENALTIES[factor](route),
+    0
+  );
+}
+
+// Weighted mean of the penalties: what the improvement of at least 5 points is measured on.
 function exposurePenalty(route, weights) {
-  const total = weights.shade + weights.sun;
+  const total = weightedFactors(weights).reduce((sum, factor) => sum + weights[factor], 0);
   if (total === 0) return 0;
-  const { sunPercentage, shadePercentage } = route.exposure;
-  return (weights.shade * sunPercentage + weights.sun * shadePercentage) / total;
+  return weightedSum(route, weights) / total;
 }
 
 function weightedCost(route, weights) {
-  if (route?.exposure?.status !== 'available') return Number.POSITIVE_INFINITY;
-  const { sunPercentage, shadePercentage } = route.exposure;
-  return (
-    route.duration * (1 + (weights.shade * sunPercentage + weights.sun * shadePercentage) / 10000)
-  );
+  if (!hasRequiredExposure(route, weights)) return Number.POSITIVE_INFINITY;
+  return route.duration * (1 + weightedSum(route, weights) / 10000);
+}
+
+function change(selected, fastest, value) {
+  const before = value(fastest);
+  const after = value(selected);
+  return before === null || after === null ? null : after - before;
 }
 
 function selectWeightedRoute(routes, weights, { maxDurationFactor = MAX_DURATION_FACTOR } = {}) {
@@ -25,7 +54,7 @@ function selectWeightedRoute(routes, weights, { maxDurationFactor = MAX_DURATION
   }
 
   const fastest = [...routes].sort((left, right) => left.duration - right.duration)[0];
-  if (fastest.exposure?.status !== 'available') {
+  if (!hasRequiredExposure(fastest, weights)) {
     return { status: 'insufficient_exposure_data', fastest, selected: null };
   }
 
@@ -34,7 +63,7 @@ function selectWeightedRoute(routes, weights, { maxDurationFactor = MAX_DURATION
   const eligible = routes
     .filter(
       (route) =>
-        route.exposure?.status === 'available' &&
+        hasRequiredExposure(route, weights) &&
         route.duration <= maximumDuration &&
         exposurePenalty(route, weights) <= fastestPenalty - MIN_IMPROVEMENT_PERCENTAGE_POINTS
     )
@@ -50,8 +79,10 @@ function selectWeightedRoute(routes, weights, { maxDurationFactor = MAX_DURATION
     fastest,
     selected,
     additionalDurationSeconds: Math.max(0, selected.duration - fastest.duration),
-    shadeChangePercentagePoints:
-      selected.exposure.shadePercentage - fastest.exposure.shadePercentage
+    shadeChangePercentagePoints: change(selected, fastest, (route) =>
+      shadowValue(route, 'shadePercentage')
+    ),
+    windChangePoints: change(selected, fastest, FACTOR_PENALTIES.wind)
   };
 }
 
@@ -59,6 +90,7 @@ module.exports = {
   MAX_DURATION_FACTOR,
   MIN_IMPROVEMENT_PERCENTAGE_POINTS,
   exposurePenalty,
+  hasRequiredExposure,
   selectWeightedRoute,
   weightedCost
 };

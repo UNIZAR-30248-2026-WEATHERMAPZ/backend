@@ -1,5 +1,8 @@
 const { importConfig } = require('../../config/importConfig');
-const { calculateRouteExposure } = require('../../domain/routes/routeExposure');
+const {
+  calculateRouteExposure,
+  unavailableRouteExposure
+} = require('../../domain/routes/routeExposure');
 const { validateShadedRouteRequest } = require('../../domain/routes/routeRequest');
 const { calculateSolarPosition } = require('../../domain/solar/solarPosition');
 const {
@@ -20,7 +23,8 @@ function referenceFromSolarPosition(position) {
 
 /**
  * The ORS candidates between two points, each with its sun/shade exposure at the given local date
- * and time (PBI-5.3). Shared by the Shaded Route and the weighted routes.
+ * and time (PBI-5.3). Shared by the Shaded Route and the weighted routes. Without includeShade
+ * (a wind-only route, ADR-025) no segments or shadows are calculated.
  */
 async function evaluateRouteCandidates(
   input,
@@ -28,7 +32,8 @@ async function evaluateRouteCandidates(
     routesProvider = getAlternativeWalkingRoutes,
     routeSegmentRepository = defaultRouteSegmentRepository,
     exposureCalculator = calculateSegmentExposures,
-    solarCalculator = calculateSolarPosition
+    solarCalculator = calculateSolarPosition,
+    includeShade = true
   } = {}
 ) {
   const timeZone = validateShadedRouteRequest(input, importConfig.zaragozaBbox);
@@ -47,6 +52,16 @@ async function evaluateRouteCandidates(
     destination: { lat: input.destination.lat, lng: input.destination.lng }
   });
   const indexedCandidates = candidates.map((route, routeIndex) => ({ ...route, routeIndex }));
+  if (!includeShade) {
+    return {
+      routes: indexedCandidates.map((route) => ({
+        ...route,
+        exposure: unavailableRouteExposure('not_requested')
+      })),
+      exposureStatus: null,
+      reference: referenceFromSolarPosition(solarPosition)
+    };
+  }
   const coverageRows = await routeSegmentRepository.findSegmentsForRoutes(indexedCandidates);
   const segmentIds = [...new Set(coverageRows.map(({ segmentId }) => Number(segmentId)))];
 
