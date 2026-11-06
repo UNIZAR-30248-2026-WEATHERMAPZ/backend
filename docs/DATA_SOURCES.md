@@ -1,6 +1,6 @@
 # WeatherMapZ Backend - Fuentes de datos
 
-Fuentes usadas por los imports de la PBI-3 (`npm run import:all`). Los endpoints, conteos y campos
+Fuentes usadas por los imports de la PBI-3 y de la PBI-10 (`npm run import:all`). Los endpoints, conteos y campos
 se verificaron contra los servicios reales el 2026-10-06. Vuelve a comprobarlos antes de fiarte de
 estas cifras.
 
@@ -19,6 +19,7 @@ Cualquier producto o documento que muestre estos datos debe incluir:
 | Edificios | WFS de IDEZAR | `citygml3d:building` | 38.963 | EPSG:25830 | Condiciones de reutilización del Ayuntamiento de Zaragoza |
 | Árboles | WFS de IDEZAR | `idezar_base:arboles_2022` | 172.543 | EPSG:25830 | Condiciones de reutilización del Ayuntamiento de Zaragoza |
 | Red peatonal | OpenStreetMap (API Overpass) | vías `highway` transitables a pie dentro del término municipal | 44.676 vías (91.872 tramos importados) | EPSG:4326 | ODbL 1.0 |
+| Zonas verdes (PBI-10) | OpenStreetMap (API Overpass) | `leisure=park` y `leisure=garden` públicos dentro del término municipal | 793 (2026-11-06) | EPSG:4326 | ODbL 1.0 |
 
 Todos los imports piden o reciben coordenadas WGS84 y las guardan en EPSG:4326.
 
@@ -108,6 +109,30 @@ más de 6 m por planta). Solo las marca para revisión; no cambia `height_m`.
 - Número de elementos de la fuente: número de vías de la respuesta de Overpass (Overpass devuelve
   todo el resultado en una sola respuesta; no hay un `numberMatched` aparte).
 - Licencia: Open Database License (ODbL) 1.0. Atribución "© OpenStreetMap contributors".
+
+### Zonas verdes (PBI-10): `npm run import:green-areas`
+
+- Misma API y misma área (`ref:ine` `50297`) que la red peatonal.
+- Elementos: vías y relaciones `type=multipolygon` con `leisure=park` o `leisure=garden`,
+  excluyendo `access=private` y `access=no`, con `out geom`. La consulta se construye en
+  `src/integrations/osm/greenAreas.js`; el mapeador vuelve a comprobar los dos filtros.
+- Geometría: los anillos (la vía cerrada, o las vías miembro de la relación) se envían como
+  MultiLineString y PostGIS los une con `ST_BuildArea` (con agujeros) y `ST_MakeValid`. Se guardan
+  en `green_areas` como MultiPolygon en EPSG:4326 con `source_id` `way/<id>` o `relation/<id>`.
+- Rechazos: `not_green_area`, `not_public`, `unsupported_element`, `missing_geometry`, `open_way`
+  (vía sin cerrar), `outside_zaragoza_bbox` e `invalid_geometry` (anillos que no forman área).
+- Medición del 2026-11-06: 793 elementos, 793 importados (365 `park`, 722 ha; 428 `garden`,
+  55 ha), 0 rechazados. En una descarga exploratoria del mismo día sin el filtro de acceso (área
+  por nombre en vez de `ref:ine`) había 837 elementos, de ellos 39 jardines `access=private`,
+  2 jardines y 1 parque `access=no`; la diferencia de 2 elementos entre esa descarga y el import
+  no se ha investigado.
+- Licencia y atribución: las mismas que la red peatonal (ODbL 1.0, "© OpenStreetMap
+  contributors").
+- Particularidades medidas: el bulevar central de Gran Vía está etiquetado como `leisure=park`
+  (`way/1065467174`, 1,5 ha), así que cuenta como zona verde. El Parque Lineal de Plaza
+  (`way/47376270`, 71,4 ha) no tiene ningún árbol del inventario de IDEZAR dentro; no se ha
+  verificado si no tiene árboles o si el inventario no lo cubre. Los demás parques grandes sí
+  tienen árboles (Parque del Agua 5.691, Parque Grande 5.089). Ver ADR-026.
 
 ## Fuentes evaluadas y no usadas
 

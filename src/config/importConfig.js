@@ -12,7 +12,9 @@ const importConfig = {
   datasets: {
     buildings: { source: 'idezar', typeName: 'citygml3d:building', sortBy: 'identifier' },
     trees: { source: 'idezar', typeName: 'idezar_base:arboles_2022', sortBy: 'ID' },
-    streets: { source: 'osm', municipalityIneRef: '50297' }
+    streets: { source: 'osm', municipalityIneRef: '50297' },
+    // Parks and gardens for the vegetation index (PBI-10, ADR-026).
+    greenAreas: { source: 'osm', municipalityIneRef: '50297' }
   },
   // Extent published by IDEZAR for the municipality of Zaragoza (catalogue spatialCoverage).
   zaragozaBbox: {

@@ -1,10 +1,12 @@
 const { sequelize } = require('../../config/database');
 const { importBuildings } = require('../../integrations/idezar/importBuildings');
 const { importTrees } = require('../../integrations/idezar/importTrees');
+const { importGreenAreas } = require('../../integrations/osm/importGreenAreas');
 const { importStreets } = require('../../integrations/osm/importStreets');
 const { upsertBatch } = require('../../repositories/urbanElementRepository');
 const buildings = require('../fixtures/idezar-buildings.json');
 const trees = require('../fixtures/idezar-trees.json');
+const greenAreas = require('../fixtures/overpass-green-areas.json');
 const overpass = require('../fixtures/overpass-streets.json');
 
 const response = (body) => ({ ok: true, status: 200, json: async () => body });
@@ -52,7 +54,7 @@ describe('import persistence (PostGIS)', () => {
 
   beforeEach(async () => {
     await sequelize.query(
-      'TRUNCATE buildings, trees, street_segments, import_rejections, import_runs RESTART IDENTITY CASCADE'
+      'TRUNCATE buildings, trees, street_segments, green_areas, import_rejections, import_runs RESTART IDENTITY CASCADE'
     );
   });
 
@@ -140,6 +142,52 @@ describe('import persistence (PostGIS)', () => {
     );
     // 0.001° of longitude at 41.65° N is about 83 m.
     expect(segment).toEqual({ osm_way_id: '100', name: 'Calle A', highway: 'footway', length: 83 });
+  });
+
+  it('builds green areas from their rings, with holes, idempotently', async () => {
+    global.fetch = jest.fn().mockResolvedValue(response(greenAreas));
+
+    const summary = await importGreenAreas();
+    await importGreenAreas();
+
+    expect(summary).toMatchObject({ status: 'success', imported: 2, rejected: 4 });
+    const areas = await sequelize.query(
+      `SELECT source_id, kind, name, ST_NumInteriorRings(ST_GeometryN(geom, 1)) AS holes,
+         round((ST_Area(geom::geography) / ST_Area(ST_ConvexHull(geom)::geography))::numeric, 2)
+           AS filled
+       FROM green_areas ORDER BY source_id`,
+      { type: 'SELECT' }
+    );
+    // The garden is a 0.004° × 0.003° rectangle with a 0.001° × 0.001° hole: 1/12 is empty.
+    expect(areas).toEqual([
+      { source_id: 'relation/300', kind: 'garden', name: null, holes: 1, filled: '0.92' },
+      { source_id: 'way/200', kind: 'park', name: 'Parque A', holes: 0, filled: '1.00' }
+    ]);
+    expect(await count("SELECT count(*) FROM import_runs WHERE dataset = 'green_areas'")).toBe(2);
+  });
+
+  it('rejects green area rings that do not enclose an area', async () => {
+    const open = {
+      itemId: 'way/1',
+      sourceId: 'way/1',
+      kind: 'park',
+      name: null,
+      geometry: {
+        type: 'MultiLineString',
+        coordinates: [
+          [
+            [-0.9, 41.6],
+            [-0.89, 41.6],
+            [-0.89, 41.61]
+          ]
+        ]
+      }
+    };
+
+    const result = await upsertBatch('green_areas', [open], { source: 'osm', runId: null });
+
+    expect(result.failures).toEqual([{ itemId: 'way/1', reason: 'invalid_geometry' }]);
+    expect(await count('SELECT count(*) FROM green_areas')).toBe(0);
   });
 
   it('repairs invalid polygons and reports unrepairable ones', async () => {

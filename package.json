@@ -20,8 +20,10 @@
     "import:buildings": "node src/integrations/idezar/importBuildings.js",
     "import:trees": "node src/integrations/idezar/importTrees.js",
     "import:streets": "node src/integrations/osm/importStreets.js",
+    "import:green-areas": "node src/integrations/osm/importGreenAreas.js",
     "import:all": "node src/integrations/importAll.js",
     "associate": "node src/cli/associate.js",
+    "compute:vegetation": "node src/cli/computeVegetation.js",
     "test:integration": "jest --config jest.integration.config.js --coverage",
     "test:all": "jest --config jest.all.config.js --coverage"
   },

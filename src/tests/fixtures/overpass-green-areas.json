@@ -1,0 +1,88 @@
+{
+  "version": 0.6,
+  "generator": "fixture",
+  "elements": [
+    {
+      "type": "way",
+      "id": 200,
+      "tags": { "leisure": "park", "name": "Parque A" },
+      "geometry": [
+        { "lat": 41.65, "lon": -0.89 },
+        { "lat": 41.65, "lon": -0.888 },
+        { "lat": 41.652, "lon": -0.888 },
+        { "lat": 41.652, "lon": -0.89 },
+        { "lat": 41.65, "lon": -0.89 }
+      ]
+    },
+    {
+      "type": "relation",
+      "id": 300,
+      "tags": { "leisure": "garden", "type": "multipolygon", "access": "yes" },
+      "members": [
+        {
+          "type": "way",
+          "ref": 301,
+          "role": "outer",
+          "geometry": [
+            { "lat": 41.66, "lon": -0.88 },
+            { "lat": 41.66, "lon": -0.876 },
+            { "lat": 41.663, "lon": -0.876 },
+            { "lat": 41.663, "lon": -0.88 },
+            { "lat": 41.66, "lon": -0.88 }
+          ]
+        },
+        {
+          "type": "way",
+          "ref": 302,
+          "role": "inner",
+          "geometry": [
+            { "lat": 41.661, "lon": -0.879 },
+            { "lat": 41.661, "lon": -0.878 },
+            { "lat": 41.662, "lon": -0.878 },
+            { "lat": 41.662, "lon": -0.879 },
+            { "lat": 41.661, "lon": -0.879 }
+          ]
+        },
+        { "type": "node", "ref": 303, "role": "label", "lat": 41.6615, "lon": -0.877 }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 201,
+      "tags": { "leisure": "garden", "access": "private" },
+      "geometry": [
+        { "lat": 41.64, "lon": -0.9 },
+        { "lat": 41.64, "lon": -0.899 },
+        { "lat": 41.641, "lon": -0.899 },
+        { "lat": 41.64, "lon": -0.9 }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 202,
+      "tags": { "leisure": "park" },
+      "geometry": [
+        { "lat": 41.64, "lon": -0.9 },
+        { "lat": 41.64, "lon": -0.899 },
+        { "lat": 41.641, "lon": -0.899 }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 203,
+      "tags": { "leisure": "park" },
+      "geometry": [
+        { "lat": 41.9, "lon": -0.9 },
+        { "lat": 41.9, "lon": -0.899 },
+        { "lat": 41.901, "lon": -0.899 },
+        { "lat": 41.9, "lon": -0.9 }
+      ]
+    },
+    {
+      "type": "relation",
+      "id": 304,
+      "tags": { "leisure": "park", "type": "multipolygon" },
+      "members": [{ "type": "way", "ref": 305, "role": "outer" }]
+    }
+  ]
+}

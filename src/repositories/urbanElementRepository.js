@@ -70,7 +70,27 @@ const UPSERT_SQL = {
       RETURNING 1
     )
     SELECT item_id, CASE WHEN ST_IsValid(g) THEN 'ok' ELSE 'invalid_geometry' END AS status
-    FROM checked`
+    FROM checked`,
+  // The rings arrive as a MultiLineString; ST_BuildArea joins them into polygons with holes.
+  green_areas: `
+    WITH input AS (
+      SELECT * FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(
+        item_id text, source_id text, kind text, name text, geometry jsonb)
+    ), built AS (
+      SELECT *, ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_BuildArea(${INPUT_GEOMETRY})), 3)) AS mg
+      FROM input
+    ), upserted AS (
+      INSERT INTO green_areas (source, source_id, kind, name, geom, import_run_id)
+      SELECT :source, source_id, kind, name, mg, :runId
+      FROM built WHERE mg IS NOT NULL AND NOT ST_IsEmpty(mg)
+      ON CONFLICT (source, source_id) DO UPDATE SET
+        kind = EXCLUDED.kind, name = EXCLUDED.name, geom = EXCLUDED.geom,
+        import_run_id = EXCLUDED.import_run_id
+      RETURNING 1
+    )
+    SELECT item_id, CASE WHEN mg IS NULL OR ST_IsEmpty(mg) THEN 'invalid_geometry' ELSE 'ok' END
+      AS status
+    FROM built`
 };
 
 function toRow(record) {
@@ -86,6 +106,7 @@ function toRow(record) {
     osm_way_id: record.osmWayId,
     name: record.name,
     highway: record.highway,
+    kind: record.kind,
     geometry: record.geometry
   };
 }

@@ -39,6 +39,8 @@ aplica todas las pendientes, en orden:
 | `20261006000004-add-building-height-suspicious` | `buildings.height_suspicious` |
 | `20261009000001-create-users` | `users` (PBI-4) |
 | `20261019000001-create-associations` | `segment_trees`, `segment_buildings`, `association_runs`, `unassociated_elements` e índice `street_segments_geog_gist` |
+| `20261106000002-create-green-areas` | `green_areas` (PBI-10) |
+| `20261106000003-create-segment-vegetation` | `vegetation_runs`, `segment_vegetation` (PBI-10) |
 
 Una base de datos que ya tenía las tres primeras migraciones solo necesita volver a ejecutar
 `npm run db:migrate`; la columna nueva se añade con `false` en las filas existentes y
@@ -81,11 +83,12 @@ Google o ambas.
 Se ejecutan después de las migraciones, en este orden:
 
 ```bash
-npm run import:all            # edificios, árboles y red peatonal (unos 20 minutos)
+npm run import:all            # edificios, árboles, red peatonal y zonas verdes (unos 20 minutos)
 # o uno a uno:
 npm run import:buildings      # IDEZAR citygml3d:building
 npm run import:trees          # IDEZAR idezar_base:arboles_2022
 npm run import:streets        # vías peatonales de OpenStreetMap vía Overpass, troceadas en tramos
+npm run import:green-areas    # parques y jardines públicos de OpenStreetMap (PBI-10, unos 40 s)
 ```
 
 Cada ejecución se guarda en `import_runs` con `source_count` (lo que anuncia la fuente),
@@ -99,7 +102,8 @@ equipo (fuera de este repositorio).
 
 Cada import, al empezar, marca como `stale` la última asociación a tramos de los tipos que puede
 cambiar y avisa en el log: después de importar hay que volver a ejecutar `npm run associate`
-(ver la sección siguiente y el ADR-010).
+(ver la sección siguiente y el ADR-010). `import:green-areas` no toca las asociaciones; deja
+desactualizado el índice de vegetación (ver "Índice de vegetación por tramo").
 
 ### Atribución de los datos
 
@@ -161,7 +165,7 @@ Cuatro endpoints de lectura que exponen las asociaciones de la PBI-3.2. Todos ex
 (`Authorization: Bearer <token>`; sin ella, `401`) y devuelven los errores con el formato común
 `{ "error": { "message", "fields"? } }`. No calculan nada al vuelo: "asociados o cercanos" es lo que
 hay en `segment_trees` y `segment_buildings` (tramo más cercano + radio). Las decisiones: ver
-DECISIONS.md (PBI-3.3 y ADR-011) en la carpeta docs del Drive del equipo.
+DECISIONS.md (PBI-3.3 y ADR-027) en la carpeta docs del Drive del equipo.
 
 ### `GET /api/segments/:id/urban-elements`
 
@@ -283,14 +287,67 @@ curl --header "Authorization: Bearer $TOKEN" http://localhost:3000/api/data/stat
       "finishedAt": "2026-10-19T15:45:50.957Z", "total": 38963, "nearestOk": 38690,
       "isolated": 273, "pctAssociated": 99.299, "stale": false
     }
-  ]
+  ],
+  "vegetation": {
+    "status": "success", "startedAt": "2026-11-06T22:40:52.572Z",
+    "finishedAt": "2026-11-06T22:41:55.025Z", "segments": 91872, "streetSegments": 91872,
+    "greenPercentage": 20.306, "treeRadiusM": 8, "stale": false, "staleReasons": []
+  }
 }
 ```
 
-`imports` tiene una entrada por dataset (`buildings`, `streets`, `trees`) y `associations` una por
-tipo (`building`, `tree`); un dataset o tipo sin ejecuciones no aparece. `stale: true` (con
-`status: "stale"`) indica que un import posterior ha podido cambiar los datos. Códigos: `200` y
-`401`.
+`imports` tiene una entrada por dataset (`buildings`, `green_areas`, `streets`, `trees`) y
+`associations` una por tipo (`building`, `tree`); un dataset o tipo sin ejecuciones no aparece.
+`stale: true` (con `status: "stale"`) indica que un import posterior ha podido cambiar los datos.
+`vegetation` es la última ejecución de `npm run compute:vegetation` (`null` si nunca se ha
+ejecutado); su `stale` se explica en "Índice de vegetación por tramo". Códigos: `200` y `401`.
+
+## Índice de vegetación por tramo (PBI-10, fase A)
+
+`npm run compute:vegetation` calcula para cada tramo de `street_segments` qué parte de su longitud
+es verde: la que está a `VEGETATION_TREE_RADIUS_M` (8 m) o menos de un árbol, o dentro de un parque
+o jardín público de OpenStreetMap (`green_areas`). Mide presencia de verde, no sombra: la sombra de
+las copas ya la calcula la PBI-5 y este índice no la usa (ADR-026 en el `docs/DECISIONS.md` del
+workspace). Todo se calcula en PostGIS, en EPSG:25830:
+
+```bash
+npm run import:all            # 1. datos (incluye import:green-areas)
+npm run associate             # 2. árboles y edificios a tramos
+npm run compute:vegetation    # 3. índice de vegetación (unos 60 s con los datos reales)
+```
+
+- Los árboles cercanos salen de `segment_trees` (PBI-3.2), que ya liga cada tramo con los árboles a
+  25 m o menos; cada uno es un disco de 8 m de radio. Por eso el radio del índice no puede superar
+  `ASSOC_TREE_RADIUS_M`.
+- La longitud verde es la del tramo dentro de la unión de discos y zonas verdes: un trozo junto a
+  un árbol dentro de un parque cuenta una vez.
+- `green_ratio = green_length_m / length_m`, entre 0 y 1.
+
+Se recalcula desde cero en una transacción, por lotes de `VEGETATION_BATCH_SIZE` tramos (5000),
+cada uno con un `statement_timeout` de `VEGETATION_BATCH_TIMEOUT_MS` (60 s), y se guarda en
+`vegetation_runs`. El comando imprime los totales y la distribución de `green_ratio` por longitud,
+y sale con código 1 si algún tramo se queda sin fila (`mismatch`) o si falla. No arranca si la
+última asociación de árboles no está en `success` (p. ej. `stale` tras un import) o si no hay un
+import de zonas verdes con `success`: dice qué comando falta.
+
+| Tabla | Contenido |
+| --- | --- |
+| `green_areas` | `source`, `source_id` (`way/<id>` o `relation/<id>`), `kind` (`park` / `garden`), `name`, `geom` (MultiPolygon 4326), `import_run_id` |
+| `segment_vegetation` | una fila por tramo: `length_m`, `tree_length_m`, `green_area_length_m`, `green_length_m`, `green_ratio`, `trees_count` (árboles a 8 m o menos), `vegetation_run_id` |
+| `vegetation_runs` | una fila por ejecución: `params`, `tree_association_run_id`, `green_areas_import_run_id`, `segments`, `street_segments`, `length_m`, `green_length_m`, `status`, `details` (duración y distribución) |
+
+**Desactualizado.** En `GET /api/data/status`, `vegetation.stale` es `true` si la última
+asociación de árboles o el último import de zonas verdes ya no son los que usó el cálculo
+(`tree_association_changed`, `green_areas_import_changed`) o si esa asociación se ha marcado
+`stale` por un import posterior (`tree_association_stale`). La solución es volver a ejecutar
+`npm run associate` si hace falta y después `npm run compute:vegetation`. Las filas de un tramo
+borrado por un import desaparecen con él (`ON DELETE CASCADE`).
+
+Con los datos reales (2026-11-06): 91.872 tramos y 5.595,8 km, en 61-62 s. El 20,3 % de la
+longitud es verde (17,9 % junto a árboles y 5,5 % en zonas verdes, que se solapan). Distribución
+de `green_ratio` por longitud: 0 % en el 72,8 % de la red, (0, 20] % en el 3,6 %, (20, 40] % en el
+1,9 %, (40, 60] % en el 1,8 %, (60, 80] % en el 2,7 % y (80, 100] % en el 17,3 %. Los valores de
+los lugares de referencia están en la checklist.
 
 ## Posición solar y sombras sobre tramos (PBI-5.1 y PBI-5.2)
 
@@ -429,6 +486,10 @@ para crearlo están en [deploy/README.md](deploy/README.md).
 - `SHADOW_MIN_SUN_ELEVATION_DEG` (10), `SHADOW_QUERY_TIMEOUT_MS` (20000): elevación solar mínima
   para proyectar sombras y tiempo máximo de la consulta de sombras (`src/config/shadowConfig.js`;
   ver ADR-015 en el `docs/DECISIONS.md` del workspace). Son opcionales.
+- `VEGETATION_TREE_RADIUS_M` (8), `VEGETATION_BATCH_SIZE` (5000), `VEGETATION_BATCH_TIMEOUT_MS`
+  (60000): radio de los árboles, tramos por lote y tiempo máximo de cada lote del índice de
+  vegetación (`src/config/vegetationConfig.js`; ver ADR-026 en el `docs/DECISIONS.md` del
+  workspace). Son opcionales; el radio no puede superar `ASSOC_TREE_RADIUS_M`.
 - `ORS_API_KEY`: clave de API de OpenRouteService / HeiGIT que usan el autocompletado y el cálculo
   de rutas. Guárdala solo en el `backend/.env` ignorado por Git o en el entorno del servidor.
   `OPENROUTESERVICE_API_KEY` sigue funcionando como alternativa para configuraciones antiguas.
@@ -864,6 +925,78 @@ códigos controlados que `/api/routes/fastest`; si el cálculo de sombras supera
 pero no añade migraciones ni dependencias.
 
 ## Checklist de verificación manual
+
+### PBI-10 (fase A) - Índice de vegetación por tramo
+
+Valores reales del 2026-11-06, sobre los datos de las PBI-3.1 y 3.2 (asociación al día). Las
+consultas SQL se pegan en `docker compose exec db psql -U weathermapz -d weathermapz`.
+
+- [ ] `npm run db:migrate` aplica `20261106000002-create-green-areas` y
+      `20261106000003-create-segment-vegetation`.
+- [ ] `npm run compute:vegetation` sin zonas verdes importadas sale con código 1 y el mensaje
+      `green areas import is missing; run "npm run import:green-areas"`, sin crear filas en
+      `vegetation_runs`.
+- [ ] `npm run import:green-areas` → `SUCCESS ... source=793 imported=793 rejected=0` y
+      `"stats":{"park":365,"garden":428}` (unos 40 s). Repetirlo no cambia
+      `SELECT count(*) FROM green_areas;` (793).
+- [ ] `SELECT count(*) FROM green_areas WHERE source_id = 'way/42365048';` → 1 (Parque Grande José
+      Antonio Labordeta, 44,4 ha).
+- [ ] `npm run compute:vegetation` → tabla con `success`, `91872` tramos de `91872`, `5595.8` km,
+      `green_%` 20.3, `trees_%` 17.9, `green_areas_%` 5.5, unos 61 s; y la distribución
+      0: 50610 tramos / 72,8 %, 0-20: 3938 / 3,6 %, 20-40: 2998 / 1,9 %, 40-60: 2888 / 1,8 %,
+      60-80: 3681 / 2,7 %, 80-100: 27757 / 17,3 %.
+- [ ] Repetirlo da lo mismo:
+      `SELECT count(*), round(sum(green_length_m)::numeric, 1), sum(trees_count) FROM segment_vegetation;`
+      → `91872 | 1136307.2 | 252597` las dos veces.
+- [ ] El Paseo de la Independencia (`399096155:2`) es verde entero:
+      `SELECT v.green_ratio, v.trees_count FROM segment_vegetation v JOIN street_segments s ON s.id = v.segment_id WHERE s.source_id = '399096155:2';`
+      → `1 | 21`.
+- [ ] Lugares de referencia, ponderados por longitud, con esta consulta:
+
+      ```sql
+      WITH ref AS (
+        SELECT s.id, CASE
+          WHEN s.name IN ('Paseo de la Independencia', 'Paseo Independencia') THEN 'Independencia'
+          WHEN s.name LIKE 'Gran Vía de Santiago%' THEN 'Gran Vía'
+          WHEN s.name = 'Paseo de Fernando el Católico' THEN 'Fernando el Católico'
+          WHEN s.name = 'Calle de Alfonso I' THEN 'Alfonso I'
+          WHEN s.name = 'Calle de Don Jaime I' THEN 'Don Jaime I' END AS lugar
+        FROM street_segments s
+        UNION ALL
+        SELECT s.id, 'Parque Grande' FROM street_segments s
+        JOIN green_areas a ON a.source_id = 'way/42365048'
+        WHERE ST_Intersects(s.geom, a.geom)
+          AND ST_Length(ST_Intersection(s.geom, a.geom)::geography) >= 0.5 * s.length_m
+      )
+      SELECT lugar, count(*) AS tramos,
+        round((100 * sum(v.green_length_m) / sum(v.length_m))::numeric, 1) AS verde,
+        round((100 * sum(v.tree_length_m) / sum(v.length_m))::numeric, 1) AS arbolado,
+        round((100 * sum(v.green_area_length_m) / sum(v.length_m))::numeric, 1) AS zona_verde,
+        round((100.0 * sum(v.trees_count) / sum(v.length_m))::numeric, 1) AS arboles_100m
+      FROM ref r JOIN segment_vegetation v ON v.segment_id = r.id
+      WHERE lugar IS NOT NULL GROUP BY lugar ORDER BY verde DESC;
+      ```
+
+      | Lugar | Tramos | Verde % | Junto a árboles % | En zona verde % | Árboles a ≤ 8 m / 100 m |
+      | --- | --- | --- | --- | --- | --- |
+      | Parque Grande (tramos con la mitad o más dentro) | 797 | 99,7 | 76,1 | 98,9 | 25,3 |
+      | Paseo de la Independencia | 58 | 85,8 | 85,8 | 0,0 | 23,8 |
+      | Calle de Don Jaime I | 26 | 64,4 | 64,4 | 0,0 | 15,6 |
+      | Gran Vía | 90 | 59,1 | 40,4 | 28,5 | 6,8 |
+      | Paseo de Fernando el Católico | 104 | 58,5 | 57,4 | 15,8 | 11,4 |
+      | Calle de Alfonso I | 16 | 0,0 | 0,0 | 0,0 | 0,0 |
+
+      Gran Vía tiene zona verde porque su bulevar central está etiquetado en OSM como
+      `leisure=park` (`way/1065467174`).
+- [ ] Con el servidor arrancado y `$token` como en la PBI-3.3,
+      `curl.exe -H "Authorization: Bearer $token" http://localhost:3000/api/data/status` →
+      `imports` incluye `green_areas` (`importedCount` 793) y `vegetation` tiene `status`
+      `success`, `segments` 91872, `greenPercentage` ≈ 20.3 y `stale` false.
+- [ ] `npm run associate -- --type=trees` (92 s en la PBI-3.2; 455 s en esta medición, con poca RAM
+      libre) → `vegetation.stale` true con
+      `staleReasons` `["tree_association_changed"]`; `npm run import:green-areas` añade
+      `green_areas_import_changed`; `npm run compute:vegetation` lo deja en false.
+- [ ] `npm run lint`, `npm run format:check` y `npm run test:all` (con la BD levantada) en verde.
 
 ### PBI-8.1 - Exposición al viento por tramo
 
