@@ -116,8 +116,18 @@ async function countResults(transaction) {
   return { ...row, distribution };
 }
 
+/*
+ * The planner estimates computeBatch at millions (it assumes 1000 rows per generate_series and
+ * per lateral subquery), far above jit_above_cost, so PostgreSQL JIT-compiles it on every batch:
+ * about 1.3 s each, even for a batch of two segments that runs in 1 ms. The JIT is turned off
+ * only inside this transaction (SET LOCAL); with real data a batch of 2000 segments also runs
+ * faster without it.
+ */
 function runInTransaction(timeoutMs, callback) {
-  return withStatementTimeout(timeoutMs, callback);
+  return withStatementTimeout(timeoutMs, async (transaction) => {
+    await sequelize.query('SET LOCAL jit = off', { transaction });
+    return callback(transaction);
+  });
 }
 
 async function getSegmentOpenness(segmentId) {
