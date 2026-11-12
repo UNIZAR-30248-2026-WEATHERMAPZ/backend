@@ -207,7 +207,7 @@ describe('recommended route rule (ADR-029)', () => {
     ])('wind from %s° is called %s, with the same weights', (windDirection, label) => {
       const result = recommend({ windSpeed: 40, windDirection });
       expect(result.label).toBe(label);
-      expect(result.weights).toEqual({ shade: 0, sun: 0, wind: 50 });
+      expect(result.weights).toEqual({ shade: 0, sun: 0, wind: 50, vegetation: 0 });
     });
   });
 

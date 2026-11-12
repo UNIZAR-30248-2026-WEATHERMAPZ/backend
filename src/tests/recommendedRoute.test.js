@@ -13,6 +13,7 @@ jest.mock('../integrations/openRouteService/directionsClient', () => ({
 jest.mock('../repositories/routeSegmentRepository', () => ({ findSegmentsForRoutes: jest.fn() }));
 jest.mock('../services/shadow/exposureService', () => ({ calculateSegmentExposures: jest.fn() }));
 jest.mock('../repositories/opennessRepository', () => ({ findOpennessNearPoints: jest.fn() }));
+jest.mock('../repositories/vegetationRepository', () => ({ findGreenRatios: jest.fn() }));
 
 const { createApp } = require('../app');
 const {
@@ -21,6 +22,7 @@ const {
 } = require('../integrations/openRouteService/directionsClient');
 const { findOpennessNearPoints } = require('../repositories/opennessRepository');
 const { findSegmentsForRoutes } = require('../repositories/routeSegmentRepository');
+const { findGreenRatios } = require('../repositories/vegetationRepository');
 const { calculateSegmentExposures } = require('../services/shadow/exposureService');
 const { clearWeatherCache } = require('../services/weather/weatherService');
 
@@ -112,6 +114,8 @@ describe('POST /api/routes/recommended', () => {
     // Every piece in a canyon (openness 0, ADR-028): only the wind along the street counts, so the
     // controlled wind cases do not depend on the buildings.
     findOpennessNearPoints.mockImplementation(async (points) => points.map(() => 0));
+    // No green on either route: the recommendation does not weigh vegetation (ADR-029).
+    findGreenRatios.mockResolvedValue(new Map());
     findSegmentsForRoutes.mockResolvedValue([
       { routeIndex: 0, segmentId: 1, overlapLengthM: 1000 },
       { routeIndex: 1, segmentId: 2, overlapLengthM: 1600 }

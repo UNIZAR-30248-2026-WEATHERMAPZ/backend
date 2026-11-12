@@ -4,11 +4,16 @@ const {
   unavailableRouteExposure
 } = require('../../domain/routes/routeExposure');
 const { validateShadedRouteRequest } = require('../../domain/routes/routeRequest');
+const {
+  calculateRouteVegetation,
+  unavailableRouteVegetation
+} = require('../../domain/routes/routeVegetation');
 const { calculateSolarPosition } = require('../../domain/solar/solarPosition');
 const {
   getAlternativeWalkingRoutes
 } = require('../../integrations/openRouteService/directionsClient');
 const defaultRouteSegmentRepository = require('../../repositories/routeSegmentRepository');
+const defaultVegetationRepository = require('../../repositories/vegetationRepository');
 const { calculateSegmentExposures } = require('../shadow/exposureService');
 
 function referenceFromSolarPosition(position) {
@@ -23,8 +28,9 @@ function referenceFromSolarPosition(position) {
 
 /**
  * The ORS candidates between two points, each with its sun/shade exposure at the given local date
- * and time (PBI-5.3). Shared by the Shaded Route and the weighted routes. Without includeShade
- * (a wind-only route, ADR-025) no segments or shadows are calculated.
+ * and time (PBI-5.3) and, with includeVegetation, its green percentage (PBI-10 phase B, ADR-031).
+ * Shared by the Shaded Route and the weighted routes. Without includeShade no shadows are
+ * calculated (a wind-only route, ADR-025); without either, not even the segments of the routes.
  */
 async function evaluateRouteCandidates(
   input,
@@ -33,7 +39,9 @@ async function evaluateRouteCandidates(
     routeSegmentRepository = defaultRouteSegmentRepository,
     exposureCalculator = calculateSegmentExposures,
     solarCalculator = calculateSolarPosition,
-    includeShade = true
+    vegetationRepository = defaultVegetationRepository,
+    includeShade = true,
+    includeVegetation = false
   } = {}
 ) {
   const timeZone = validateShadedRouteRequest(input, importConfig.zaragozaBbox);
@@ -52,11 +60,12 @@ async function evaluateRouteCandidates(
     destination: { lat: input.destination.lat, lng: input.destination.lng }
   });
   const indexedCandidates = candidates.map((route, routeIndex) => ({ ...route, routeIndex }));
-  if (!includeShade) {
+  if (!includeShade && !includeVegetation) {
     return {
       routes: indexedCandidates.map((route) => ({
         ...route,
-        exposure: unavailableRouteExposure('not_requested')
+        exposure: unavailableRouteExposure('not_requested'),
+        vegetation: unavailableRouteVegetation('not_requested')
       })),
       exposureStatus: null,
       reference: referenceFromSolarPosition(solarPosition)
@@ -64,22 +73,28 @@ async function evaluateRouteCandidates(
   }
   const coverageRows = await routeSegmentRepository.findSegmentsForRoutes(indexedCandidates);
   const segmentIds = [...new Set(coverageRows.map(({ segmentId }) => Number(segmentId)))];
+  const coverageOf = (route) =>
+    coverageRows.filter(({ routeIndex }) => Number(routeIndex) === route.routeIndex);
 
   let exposureResult = null;
-  if (segmentIds.length > 0) {
+  if (includeShade && segmentIds.length > 0) {
     exposureResult = await exposureCalculator({ segmentIds, ...solarInput });
   }
   const exposuresBySegmentId = new Map(
     (exposureResult?.segments || []).map((exposure) => [Number(exposure.segmentId), exposure])
   );
+  const greenRatios = includeVegetation
+    ? await vegetationRepository.findGreenRatios(segmentIds)
+    : null;
 
   const routes = indexedCandidates.map((route) => ({
     ...route,
-    exposure: calculateRouteExposure(
-      route,
-      coverageRows.filter(({ routeIndex }) => Number(routeIndex) === route.routeIndex),
-      exposuresBySegmentId
-    )
+    exposure: includeShade
+      ? calculateRouteExposure(route, coverageOf(route), exposuresBySegmentId)
+      : unavailableRouteExposure('not_requested'),
+    vegetation: greenRatios
+      ? calculateRouteVegetation(route, coverageOf(route), greenRatios)
+      : unavailableRouteVegetation('not_requested')
   }));
 
   return {

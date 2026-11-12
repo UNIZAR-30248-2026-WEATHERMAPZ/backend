@@ -33,9 +33,11 @@ describe('weighted route service', () => {
   const fastestRouteCalculator = jest.fn();
   const weather = jest.fn();
   const findOpennessNearPoints = jest.fn();
+  const findGreenRatios = jest.fn();
   const dependencies = {
     weather,
     opennessRepository: { findOpennessNearPoints },
+    vegetationRepository: { findGreenRatios },
     alternativesProvider: routesProvider,
     routeSegmentRepository: { findSegmentsForRoutes },
     exposureCalculator,
@@ -50,6 +52,13 @@ describe('weighted route service', () => {
     weather.mockResolvedValue({ windSpeed: 5, windDirection: 0, time: '2026-06-21T14:00' });
     // Canyons by default: the model of PBI-8.2, only the wind along the streets counts.
     findOpennessNearPoints.mockImplementation(async (points) => points.map(() => 0));
+    // The fastest route has no green, the alternative half of it (PBI-10 phase B).
+    findGreenRatios.mockResolvedValue(
+      new Map([
+        [1, 0],
+        [2, 0.5]
+      ])
+    );
     // A sunny fastest route and a shaded alternative 10 % longer.
     routesProvider.mockResolvedValue([
       { geometry: geometry(), distance: 1000, duration: 600 },
@@ -168,6 +177,78 @@ describe('weighted route service', () => {
     ).rejects.toMatchObject({ status: 400 });
     expect(routesProvider).not.toHaveBeenCalled();
     expect(fastestRouteCalculator).not.toHaveBeenCalled();
+  });
+
+  describe('vegetation (PBI-10 phase B, ADR-031)', () => {
+    it('chooses the greener alternative without calculating shadows, also at night', async () => {
+      const result = await calculateWeightedRouteComparison(
+        { ...input, time: '23:30', weights: { vegetation: 100 } },
+        dependencies
+      );
+
+      expect(exposureCalculator).not.toHaveBeenCalled();
+      expect(findGreenRatios).toHaveBeenCalledWith([1, 2]);
+      expect(result).toMatchObject({
+        status: 'selected',
+        weights: { shade: 0, sun: 0, wind: 0, vegetation: 100 },
+        fastest: {
+          duration: 600,
+          exposure: { reason: 'not_requested' },
+          vegetation: { status: 'available', greenPercentage: 0 }
+        },
+        selected: { duration: 660, vegetation: { greenPercentage: 50 } },
+        greenChangePercentagePoints: 50,
+        shadeChangePercentagePoints: null
+      });
+    });
+
+    it('keeps the fastest route when the green is not worth the extra time', async () => {
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { vegetation: 5 } },
+        dependencies
+      );
+
+      expect(result).toMatchObject({ status: 'no_better_alternative', selected: null });
+      expect(result.fastest.vegetation.greenPercentage).toBe(0);
+    });
+
+    it('also shows the green percentage of the routes when shade weighs', async () => {
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { shade: 50 } },
+        dependencies
+      );
+
+      expect(result.selected.vegetation).toMatchObject({ greenPercentage: 50 });
+      expect(result.greenChangePercentagePoints).toBe(50);
+      // One query for the segments of all the routes, shared by shade and green.
+      expect(findSegmentsForRoutes).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not look for segments or green when only wind weighs', async () => {
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { wind: 100 }, wind: { speedKmh: 50, directionDeg: 0 } },
+        dependencies
+      );
+
+      expect(findSegmentsForRoutes).not.toHaveBeenCalled();
+      expect(findGreenRatios).not.toHaveBeenCalled();
+      expect(result.fastest.vegetation).toMatchObject({ reason: 'not_requested' });
+      expect(result.greenChangePercentagePoints).toBeNull();
+    });
+
+    it('says why there is no green percentage without the vegetation index', async () => {
+      findGreenRatios.mockResolvedValue(new Map());
+
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { vegetation: 100 } },
+        dependencies
+      );
+
+      expect(result).toMatchObject({
+        status: 'insufficient_exposure_data',
+        fastest: { vegetation: { status: 'unavailable', reason: 'insufficient_segment_coverage' } }
+      });
+    });
   });
 
   describe('wind (PBI-8.2)', () => {

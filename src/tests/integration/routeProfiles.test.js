@@ -2,6 +2,7 @@ const { sequelize } = require('../../config/database');
 const routeProfileRepository = require('../../repositories/routeProfileRepository');
 const userRepository = require('../../repositories/userRepository');
 const exclusiveShadeSun = require('../../repositories/migrations/20261112000001-exclusive-shade-sun');
+const uniqueNames = require('../../repositories/migrations/20261112000003-unique-route-profile-names');
 
 const newUser = (email) => userRepository.createUser({ name: 'Ana', email, passwordHash: 'x' });
 
@@ -25,9 +26,9 @@ describe('route profiles (PostgreSQL)', () => {
     ]);
 
     expect(first.map(({ name, presetKey, weights }) => [name, presetKey, weights])).toEqual([
-      ['Rápida', 'fastest', { shade: 0, sun: 0, wind: 0 }],
-      ['Sombreada', 'shaded', { shade: 50, sun: 0, wind: 0 }],
-      ['Soleada', 'sunny', { shade: 0, sun: 50, wind: 0 }]
+      ['Rápida', 'fastest', { shade: 0, sun: 0, wind: 0, vegetation: 0 }],
+      ['Sombreada', 'shaded', { shade: 50, sun: 0, wind: 0, vegetation: 0 }],
+      ['Soleada', 'sunny', { shade: 0, sun: 50, wind: 0, vegetation: 0 }]
     ]);
     expect(again).toEqual(first);
     expect(other).toHaveLength(3);
@@ -85,7 +86,7 @@ describe('route profiles (PostgreSQL)', () => {
       weights: { shade: 0, sun: 0, wind: 70 },
       maxDetourPercentage: 25
     });
-    expect(windy.weights).toEqual({ shade: 0, sun: 0, wind: 70 });
+    expect(windy.weights).toEqual({ shade: 0, sun: 0, wind: 70, vegetation: 0 });
     await expect(
       routeProfileRepository.updateForUser(ana.id, summer.id, {
         name: 'Sombreada',
@@ -167,6 +168,36 @@ describe('route profiles (PostgreSQL)', () => {
     ).rejects.toThrow(/route_profiles_exclusive_shade_sun/);
   });
 
+  it('saves the vegetation weight, 0 for the presets and the routes saved without one', async () => {
+    const ana = await newUser('ana@correo.es');
+    const presets = await routeProfileRepository.listForUser(ana.id);
+    expect(presets.every(({ weights }) => weights.vegetation === 0)).toBe(true);
+
+    const green = await routeProfileRepository.createForUser(ana.id, {
+      name: 'Verde',
+      weights: { shade: 0, sun: 0, wind: 0, vegetation: 70 },
+      maxDetourPercentage: 25
+    });
+    expect(green.weights).toEqual({ shade: 0, sun: 0, wind: 0, vegetation: 70 });
+    const updated = await routeProfileRepository.updateForUser(ana.id, green.id, {
+      name: 'Verde',
+      weights: { shade: 30, sun: 0, wind: 0, vegetation: 100 },
+      maxDetourPercentage: 10
+    });
+    expect(updated.weights).toEqual({ shade: 30, sun: 0, wind: 0, vegetation: 100 });
+
+    await sequelize.query(
+      `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight) VALUES (${ana.id}, 'Antigua', 20, 0)`
+    );
+    const all = await routeProfileRepository.listForUser(ana.id);
+    expect(all.find(({ name }) => name === 'Antigua').weights.vegetation).toBe(0);
+    await expect(
+      sequelize.query(
+        `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight, vegetation_weight) VALUES (${ana.id}, 'Mal', 0, 0, 101)`
+      )
+    ).rejects.toThrow();
+  });
+
   it('gives a wind weight of 0 to routes saved without one', async () => {
     const ana = await newUser('ana@correo.es');
     await sequelize.query(
@@ -176,5 +207,99 @@ describe('route profiles (PostgreSQL)', () => {
     const [old] = await routeProfileRepository.listForUser(ana.id);
 
     expect(old).toMatchObject({ name: 'Antigua', weights: { shade: 30, sun: 0, wind: 0 } });
+  });
+  // Repeated names of the saved routes (#165).
+  const weights = { shade: 0, sun: 0, wind: 0, vegetation: 0 };
+
+  it('says which route has the name, without case or surrounding spaces', async () => {
+    const ana = await newUser('ana@correo.es');
+    const [fastest] = await routeProfileRepository.listForUser(ana.id);
+    const summer = await routeProfileRepository.createForUser(ana.id, {
+      name: 'Verano',
+      weights,
+      maxDetourPercentage: 25
+    });
+
+    // The API trims the name; the index also ignores the spaces of a name saved with them.
+    await sequelize.query(`UPDATE route_profiles SET name = ' Verano ' WHERE id = ${summer.id}`);
+    await expect(
+      routeProfileRepository.createForUser(ana.id, {
+        name: 'VERANO',
+        weights,
+        maxDetourPercentage: 25
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: 'Ya tienes una ruta llamada «Verano».',
+      fields: { name: 'Ya tienes una ruta llamada «Verano».' },
+      existingId: summer.id
+    });
+    // Renaming another route to the name of a preset copied to the user.
+    await expect(
+      routeProfileRepository.updateForUser(ana.id, summer.id, {
+        name: 'rápida',
+        weights,
+        maxDetourPercentage: 25
+      })
+    ).rejects.toMatchObject({ status: 409, existingId: fastest.id });
+    // Its own name, with other case, is not a repetition; accents still count.
+    await expect(
+      routeProfileRepository.updateForUser(ana.id, summer.id, {
+        name: 'VERANO',
+        weights,
+        maxDetourPercentage: 25
+      })
+    ).resolves.toMatchObject({ name: 'VERANO' });
+    await expect(
+      routeProfileRepository.createForUser(ana.id, {
+        name: 'Rapida',
+        weights,
+        maxDetourPercentage: 25
+      })
+    ).resolves.toMatchObject({ name: 'Rapida' });
+    // Another user may use the same name.
+    const luis = await newUser('luis@correo.es');
+    await expect(
+      routeProfileRepository.createForUser(luis.id, {
+        name: 'Verano',
+        weights,
+        maxDetourPercentage: 25
+      })
+    ).resolves.toMatchObject({ name: 'Verano' });
+  });
+
+  it('migration unique-route-profile-names fixes the names saved before and logs how many', async () => {
+    const queryInterface = sequelize.getQueryInterface();
+    const ana = await newUser('ana@correo.es');
+    const luis = await newUser('luis@correo.es');
+    // The index as before (lower(name)): it let through names that only differ in spaces.
+    await uniqueNames.down(queryInterface);
+    await sequelize.query(
+      `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight) VALUES
+         (${ana.id}, 'Verano', 50, 0),
+         (${ana.id}, ' verano ', 30, 0),
+         (${ana.id}, 'Recomendada', 0, 0),
+         (${ana.id}, ' Otoño', 0, 20),
+         (${luis.id}, 'Verano ', 10, 0)`
+    );
+
+    const counts = await uniqueNames.up(queryInterface);
+
+    expect(counts).toEqual({ trimmed: 3, duplicates: 1, reserved: 1 });
+    const [rows] = await sequelize.query(
+      'SELECT user_id AS "userId", name, shade_weight AS shade FROM route_profiles ORDER BY id'
+    );
+    expect(rows).toEqual([
+      { userId: ana.id, name: 'Verano', shade: 50 },
+      { userId: ana.id, name: 'verano (2)', shade: 30 },
+      { userId: ana.id, name: 'Recomendada (2)', shade: 0 },
+      { userId: ana.id, name: 'Otoño', shade: 0 },
+      { userId: luis.id, name: 'Verano', shade: 10 }
+    ]);
+    await expect(
+      sequelize.query(
+        `INSERT INTO route_profiles (user_id, name, shade_weight, sun_weight) VALUES (${ana.id}, ' VERANO', 0, 0)`
+      )
+    ).rejects.toMatchObject({ original: { constraint: 'route_profiles_user_name_idx' } });
   });
 });

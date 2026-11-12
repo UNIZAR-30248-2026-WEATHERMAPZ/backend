@@ -7,7 +7,10 @@ const { env } = require('../../config/env');
 const { vegetationConfig } = require('../../config/vegetationConfig');
 const { markStale } = require('../../repositories/associationRepository');
 const { createRun, finishRun } = require('../../repositories/importRepository');
-const { withStatementTimeout } = require('../../repositories/vegetationRepository');
+const {
+  findGreenRatios,
+  withStatementTimeout
+} = require('../../repositories/vegetationRepository');
 const { signToken } = require('../../services/auth/tokenService');
 const { runAssociation } = require('../../services/geo/associationService');
 const {
@@ -173,6 +176,23 @@ describe('vegetation index of the street segments (PostGIS)', () => {
       params: { treeRadiusM: 8, batchSize: 5000, batchTimeoutMs: 60000 }
     });
     expect(run.details.distribution.map(({ range }) => range)).toEqual(['0', '0-20', '40-60']);
+  });
+
+  it('gives the green ratio of the segments of a route (PBI-10 phase B)', async () => {
+    await runVegetation();
+    const streetSegments = await rows('SELECT id, source_id FROM street_segments ORDER BY id');
+    const vegetation = await vegetationOf();
+
+    const ratios = await findGreenRatios([...streetSegments.map(({ id }) => id), 999999]);
+
+    // One entry per segment with an index; an unknown segment is simply missing.
+    expect(ratios.size).toBe(3);
+    expect(ratios.has(999999)).toBe(false);
+    streetSegments.forEach(({ id, source_id: sourceId }) => {
+      expect(ratios.get(id)).toBeCloseTo(vegetation[sourceId].green_ratio, 6);
+    });
+    expect(ratios.get(streetSegments.find(({ source_id: name }) => name === 'S_NONE').id)).toBe(0);
+    expect(await findGreenRatios([])).toEqual(new Map());
   });
 
   it('gives the same index when repeated, also in batches of one segment', async () => {

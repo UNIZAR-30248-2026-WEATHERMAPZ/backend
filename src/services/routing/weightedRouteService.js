@@ -1,6 +1,7 @@
 const {
   hasEnvironmentalWeight,
   hasShadeWeight,
+  hasVegetationWeight,
   parseMaxDetour,
   parseWeights
 } = require('../../domain/routes/routeWeights');
@@ -122,6 +123,7 @@ async function calculateWeightedRouteComparison(
       additionalDurationSeconds: null,
       shadeChangePercentagePoints: null,
       windChangePoints: null,
+      greenChangePercentagePoints: null,
       candidatesEvaluated: 1,
       strategy
     };
@@ -131,6 +133,8 @@ async function calculateWeightedRouteComparison(
   const { routes, exposureStatus, reference } = await evaluateRouteCandidates(input, {
     routesProvider: (points) => alternativesProvider(points, { weightFactor }),
     includeShade: hasShadeWeight(weights),
+    // The green percentage is also shown when shade or sun weigh: their segments are already known.
+    includeVegetation: hasVegetationWeight(weights) || hasShadeWeight(weights),
     ...dependencies
   });
   const selection = selectWeightedRoute(
@@ -151,6 +155,7 @@ async function calculateWeightedRouteComparison(
     additionalDurationSeconds: isSelected ? selection.additionalDurationSeconds : null,
     shadeChangePercentagePoints: isSelected ? selection.shadeChangePercentagePoints : null,
     windChangePoints: isSelected ? selection.windChangePoints : null,
+    greenChangePercentagePoints: isSelected ? selection.greenChangePercentagePoints : null,
     candidatesEvaluated: routes.length,
     strategy
   };

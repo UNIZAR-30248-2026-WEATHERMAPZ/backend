@@ -14,7 +14,7 @@ describe('route profile service', () => {
   const service = createRouteProfileService(repository);
   const input = {
     name: 'Verano',
-    weights: { shade: 80, sun: 0, wind: 0 },
+    weights: { shade: 80, sun: 0, wind: 0, vegetation: 0 },
     maxDetourPercentage: 25
   };
 

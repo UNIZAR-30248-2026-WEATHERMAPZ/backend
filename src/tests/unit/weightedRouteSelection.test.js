@@ -31,14 +31,14 @@ describe('route weights', () => {
       true
     );
     expect(PRESET_PROFILES.map(({ name, weights }) => [name, weights])).toEqual([
-      ['Rápida', { shade: 0, sun: 0, wind: 0 }],
-      ['Sombreada', { shade: 50, sun: 0, wind: 0 }],
-      ['Soleada', { shade: 0, sun: 50, wind: 0 }]
+      ['Rápida', { shade: 0, sun: 0, wind: 0, vegetation: 0 }],
+      ['Sombreada', { shade: 50, sun: 0, wind: 0, vegetation: 0 }],
+      ['Soleada', { shade: 0, sun: 50, wind: 0, vegetation: 0 }]
     ]);
   });
 
   it('accepts whole percentages and treats a missing factor as 0', () => {
-    expect(parseWeights({ shade: 100 })).toEqual({ shade: 100, sun: 0, wind: 0 });
+    expect(parseWeights({ shade: 100 })).toEqual({ shade: 100, sun: 0, wind: 0, vegetation: 0 });
     expect(hasEnvironmentalWeight({ shade: 0, sun: 0 })).toBe(false);
     expect(hasEnvironmentalWeight({ shade: 0, sun: 1 })).toBe(true);
   });
@@ -78,7 +78,7 @@ describe('route weights', () => {
   it('validates the name of a saved route', () => {
     expect(parseProfileInput({ name: '  Verano ', weights: { shade: 80 } })).toEqual({
       name: 'Verano',
-      weights: { shade: 80, sun: 0, wind: 0 },
+      weights: { shade: 80, sun: 0, wind: 0, vegetation: 0 },
       maxDetourPercentage: 25
     });
     expect(
@@ -235,5 +235,88 @@ describe('weighted route selection with wind (PBI-8.2)', () => {
     expect(selectWeightedRoute(routes, { shade: 50, sun: 0, wind: 0 }).selected).toMatchObject({
       id: 'shade'
     });
+  });
+});
+
+describe('vegetation weight (PBI-10 phase B, ADR-031)', () => {
+  // The fastest route has no green; the greener ones are longer.
+  const green = (id, duration, greenPercentage, status = 'available') => ({
+    id,
+    duration,
+    exposure: { status: 'unavailable', shadePercentage: null, sunPercentage: null },
+    vegetation: { status, greenPercentage: status === 'available' ? greenPercentage : null }
+  });
+  const greenCandidates = [green('fast', 600, 0), green('park', 740, 90), green('avenue', 630, 40)];
+
+  it('penalises what is not green: 100 − % green', () => {
+    expect(exposurePenalty(greenCandidates[0], { vegetation: 100 })).toBe(100);
+    expect(exposurePenalty(greenCandidates[1], { vegetation: 100 })).toBe(10);
+    expect(weightedCost(greenCandidates[1], { vegetation: 100 })).toBeCloseTo(740 * 1.1);
+  });
+
+  it('chooses a greener alternative within the extra time, and says how much greener', () => {
+    const result = selectWeightedRoute(greenCandidates, { vegetation: 100 });
+
+    expect(result).toMatchObject({
+      status: 'selected',
+      selected: { id: 'park' },
+      additionalDurationSeconds: 140,
+      greenChangePercentagePoints: 90
+    });
+  });
+
+  it('with a lower weight accepts less extra time for the green', () => {
+    expect(selectWeightedRoute(greenCandidates, { vegetation: 30 }).selected.id).toBe('avenue');
+  });
+
+  it('without vegetation weight the green does not count', () => {
+    expect(selectWeightedRoute(greenCandidates, { vegetation: 0, wind: 0 })).toMatchObject({
+      status: 'no_better_alternative',
+      selected: null
+    });
+  });
+
+  it('does not exceed the extra time allowed', () => {
+    expect(
+      selectWeightedRoute(greenCandidates, { vegetation: 100 }, { maxDurationFactor: 1.1 })
+    ).toMatchObject({ selected: { id: 'avenue' } });
+  });
+
+  it('cannot compare without the green percentage of the fastest route', () => {
+    const withoutData = [green('fast', 600, 0, 'unavailable'), greenCandidates[1]];
+    expect(selectWeightedRoute(withoutData, { vegetation: 100 }).status).toBe(
+      'insufficient_exposure_data'
+    );
+  });
+
+  it('adds up with shade: a shaded park wins over a sunny one', () => {
+    const both = [
+      { ...green('fast', 600, 0), exposure: route('fast', 600, 10).exposure },
+      { ...green('sunny park', 660, 90), exposure: route('x', 660, 10).exposure },
+      { ...green('shaded park', 660, 90), exposure: route('y', 660, 70).exposure }
+    ];
+    expect(selectWeightedRoute(both, { shade: 50, vegetation: 50 })).toMatchObject({
+      selected: { id: 'shaded park' },
+      shadeChangePercentagePoints: 60,
+      greenChangePercentagePoints: 90
+    });
+  });
+});
+
+describe('names of the saved routes (#165)', () => {
+  it('reserves "Recomendada" for the recommended route, without case or spaces', () => {
+    ['Recomendada', ' recomendada ', 'RECOMENDADA'].forEach((name) => {
+      expect(() => parseProfileInput({ name, weights: { shade: 50 } })).toThrow(
+        expect.objectContaining({
+          status: 400,
+          fields: { name: '«Recomendada» es la ruta automática: elige otro nombre.' }
+        })
+      );
+    });
+  });
+
+  it('accepts names that only look like it: accents and extra words count', () => {
+    expect(parseProfileInput({ name: 'Recomendáda', weights: {} }).name).toBe('Recomendáda');
+    expect(parseProfileInput({ name: 'Recomendada 2', weights: {} }).name).toBe('Recomendada 2');
   });
 });

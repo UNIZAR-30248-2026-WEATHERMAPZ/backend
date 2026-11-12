@@ -76,6 +76,46 @@ describe('/api/route-profiles', () => {
   });
 });
 
+describe('/api/route-profiles with a repeated name (#165)', () => {
+  const duplicate = () =>
+    Object.assign(new Error('Ya tienes una ruta llamada «Verano».'), {
+      status: 409,
+      fields: { name: 'Ya tienes una ruta llamada «Verano».' },
+      existingId: 4
+    });
+
+  it('says which route already has the name, when creating and when renaming', async () => {
+    routeProfileService.create.mockRejectedValue(duplicate());
+    routeProfileService.update.mockRejectedValue(duplicate());
+    const app = createApp();
+
+    const created = await request(app).post('/api/route-profiles').send({ name: ' verano ' });
+    const renamed = await request(app).put('/api/route-profiles/9').send({ name: 'VERANO' });
+
+    [created, renamed].forEach((response) => {
+      expect(response.status).toBe(409);
+      expect(response.body).toEqual({
+        error: {
+          message: 'Ya tienes una ruta llamada «Verano».',
+          fields: { name: 'Ya tienes una ruta llamada «Verano».' },
+          existingId: 4
+        }
+      });
+    });
+  });
+
+  it('keeps any other 409 as before, without existingId', async () => {
+    routeProfileService.create.mockRejectedValue(
+      Object.assign(new Error('Puedes guardar como máximo 20 rutas.'), { status: 409 })
+    );
+
+    const response = await request(createApp()).post('/api/route-profiles').send({});
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ error: { message: 'Puedes guardar como máximo 20 rutas.' } });
+  });
+});
+
 describe('POST /api/routes/weighted', () => {
   it('returns the comparison for the weights', async () => {
     const comparison = { status: 'selected', fastest: { duration: 600 } };

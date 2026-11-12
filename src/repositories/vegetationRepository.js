@@ -1,6 +1,8 @@
 const { QueryTypes } = require('sequelize');
 
 const { sequelize } = require('../config/database');
+const { shadowConfig } = require('../config/shadowConfig');
+const { withStatementTimeout: withRouteTimeout } = require('./statementTimeout');
 
 function select(sql, replacements, transaction) {
   return sequelize.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
@@ -169,8 +171,27 @@ async function getLatestRun() {
   return run ?? null;
 }
 
+/*
+ * green_ratio of the given street segments, for the green percentage of the routes (PBI-10 phase B).
+ * Same time limit as the other queries of a route request (ADR-015). Segments without a row (the
+ * index was never calculated, or the segment is newer) are simply missing from the map.
+ */
+async function findGreenRatios(segmentIds) {
+  if (!segmentIds.length) return new Map();
+  const rows = await withRouteTimeout(shadowConfig.queryTimeoutMs, (transaction) =>
+    select(
+      `SELECT segment_id AS "segmentId", green_ratio::float8 AS "greenRatio"
+       FROM segment_vegetation WHERE segment_id IN (:segmentIds)`,
+      { segmentIds },
+      transaction
+    )
+  );
+  return new Map(rows.map(({ segmentId, greenRatio }) => [Number(segmentId), greenRatio]));
+}
+
 module.exports = {
   clear,
+  findGreenRatios,
   computeBatch,
   countResults,
   createRun,

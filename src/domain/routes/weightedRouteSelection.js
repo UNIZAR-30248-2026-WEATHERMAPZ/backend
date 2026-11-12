@@ -6,13 +6,21 @@ const MIN_IMPROVEMENT_PERCENTAGE_POINTS = 5;
 const shadowValue = (route, key) =>
   route?.exposure?.status === 'available' ? route.exposure[key] : null;
 
-// What each weight penalises, from 0 to 100: sun for shade, shade for sun and the wind exposure of
-// the walking direction for wind (ADR-025). null when the route has no data for it.
+const greenValue = (route) =>
+  route?.vegetation?.status === 'available' ? route.vegetation.greenPercentage : null;
+
+// What each weight penalises, from 0 to 100: sun for shade, shade for sun, the wind exposure of the
+// walking direction for wind (ADR-025) and what is not green for vegetation (100 − % green,
+// ADR-026 and ADR-031). null when the route has no data for it.
 const FACTOR_PENALTIES = {
   shade: (route) => shadowValue(route, 'sunPercentage'),
   sun: (route) => shadowValue(route, 'shadePercentage'),
   wind: (route) =>
-    route?.windExposure?.status === 'available' ? route.windExposure.exposure : null
+    route?.windExposure?.status === 'available' ? route.windExposure.exposure : null,
+  vegetation: (route) => {
+    const green = greenValue(route);
+    return green === null ? null : 100 - green;
+  }
 };
 
 const weightedFactors = (weights) =>
@@ -82,7 +90,8 @@ function selectWeightedRoute(routes, weights, { maxDurationFactor = MAX_DURATION
     shadeChangePercentagePoints: change(selected, fastest, (route) =>
       shadowValue(route, 'shadePercentage')
     ),
-    windChangePoints: change(selected, fastest, FACTOR_PENALTIES.wind)
+    windChangePoints: change(selected, fastest, FACTOR_PENALTIES.wind),
+    greenChangePercentagePoints: change(selected, fastest, greenValue)
   };
 }
 

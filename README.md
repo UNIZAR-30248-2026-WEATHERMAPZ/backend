@@ -852,7 +852,41 @@ Cuerpo `{ "name": "Verano", "weights": { "shade": 80, "sun": 0, "wind": 20 }, "m
 válidos, o si `shade` y `sun` son mayores que 0 a la vez (`fields.shade` y `fields.sun`: "Elige sombra
 o sol, no los dos a la vez."; ver ADR-030 en DECISIONS.md, en la carpeta docs del Drive del equipo;
 `POST /api/routes/weighted` responde igual), `409` si el nombre ya existe para ese usuario o tiene ya 20 rutas, y `404` si la ruta no es
-suya.
+suya. Ver "Nombres repetidos (#165)" justo debajo.
+
+#### Nombres repetidos (#165)
+
+Los nombres de las rutas de un usuario son únicos **sin distinguir mayúsculas ni espacios al
+principio o al final** ("Verano" = " verano "); **las tildes sí cuentan** ("Rapida" y "Rápida" son
+nombres distintos). Lo decide el índice único `route_profiles_user_name_idx`
+`(user_id, lower(btrim(name)))`. Otro usuario puede usar el mismo nombre.
+
+- Crear o renombrar con un nombre ya usado → `409` con el mensaje en `fields.name` y el id de la
+  ruta que ya lo tiene en `existingId`, para que el frontend ofrezca reemplazarla. Lo responde el
+  controlador de `/api/route-profiles` (el `errorHandler` solo pasa `message` y `fields`). Respuesta
+  real (2026-11-12) a `POST` con `"name": " sombreada "`:
+
+  ```json
+  {
+    "error": {
+      "message": "Ya tienes una ruta llamada «Sombreada».",
+      "fields": { "name": "Ya tienes una ruta llamada «Sombreada»." },
+      "existingId": 52
+    }
+  }
+  ```
+
+  El otro `409` (ya tiene 20 rutas) no trae `existingId`.
+- **"Recomendada" está reservado** (es la ruta automática de la PBI-9.1, no una ruta guardada): `400`
+  con `fields.name` "«Recomendada» es la ruta automática: elige otro nombre.", sin distinguir
+  mayúsculas ni espacios.
+- Migración `20261112000003-unique-route-profile-names`: antes de crear el índice recorta los
+  espacios de los nombres guardados, renombra los repetidos a "X (2)", "X (3)"... (la ruta más
+  antigua se queda el nombre; la base se recorta para no pasar de 40 caracteres) y renombra las
+  rutas llamadas "Recomendada" a "Recomendada (2)". Escribe en el log cuántas de cada tipo, p. ej.
+  `INFO unique-route-profile-names: 0 name(s) trimmed, 0 repeated name(s) renamed and 0 route(s)
+  called "Recomendada" renamed`; conviene apuntarlo al desplegar. El `down` vuelve al índice
+  `(user_id, lower(name))`; los nombres corregidos no se recuperan.
 
 ### `DELETE /api/route-profiles/:id`
 
@@ -888,6 +922,67 @@ pesos a 0, `fastest_only` (solo se pide la ruta rápida).
 - `windChangePoints` es la exposición al viento de `selected` menos la de `fastest` (negativa si
   está más resguardada). `shadeChangePercentagePoints` es `null` si no hay sombras.
 - `wind` no válido (velocidad de 0 a 200 km/h, dirección de 0 a 360°) → `400` con `fields`.
+
+#### La vegetación en las rutas (PBI-10, fase B)
+
+Ver ADR-026 y ADR-031 en DECISIONS.md, en la carpeta docs del Drive del equipo.
+
+- **Peso `weights.vegetation`** (0-100 %): un factor más, independiente de la sombra. Penaliza lo
+  que no es verde: `100 − % verde`. El coste queda
+  `duración × (1 + (peso_sombra × %sol + peso_sol × %sombra + peso_viento × exposición_viento +
+  peso_vegetación × (100 − %verde)) / 10000)`, con la misma mejora mínima de 5 puntos.
+- **% verde de cada ruta** (`fastest.vegetation` y `selected.vegetation`): media del `green_ratio`
+  de sus tramos (`segment_vegetation`, `npm run compute:vegetation`) ponderada por la longitud de
+  ruta sobre cada uno. Necesita, como la sombra, datos para el 80 % de la ruta; si no,
+  `status: "unavailable"` con `reason: "insufficient_segment_coverage"`. No depende del Sol: una
+  ruta que solo pesa el verde funciona de noche y no calcula sombras.
+- **Cuándo se calcula:** si pesan el verde, la sombra o el sol (los tramos de la ruta ya se buscan
+  para la sombra). Con solo viento, o en la ruta rápida sin pesos, `vegetation.reason` es
+  `not_requested`.
+- `greenChangePercentagePoints`: % verde de `selected` menos el de `fastest`.
+- **Rutas guardadas:** columna `vegetation_weight`, 0 por defecto (migración
+  `20261112000002-add-route-profile-vegetation-weight`); `/api/route-profiles` acepta y devuelve
+  `weights.vegetation`. No hay ruta predefinida "Verde": cada usuario crea la suya.
+
+Ejemplo real (2026-11-12, Plaza del Pilar → Plaza San Francisco, a las 23:00):
+
+```json
+{
+  "origin": { "lat": 41.657204, "lng": -0.880394 },
+  "destination": { "lat": 41.641356, "lng": -0.895734 },
+  "date": "2026-11-12", "time": "23:00", "timeZone": "Europe/Madrid",
+  "weights": { "vegetation": 100 }
+}
+```
+
+```json
+{
+  "comparison": {
+    "status": "selected",
+    "weights": { "shade": 0, "sun": 0, "wind": 0, "vegetation": 100 },
+    "fastest": {
+      "duration": 1831.1,
+      "distance": 2543.3,
+      "vegetation": {
+        "status": "available", "reason": null, "coverageRatio": 1, "coveragePercentage": 100,
+        "greenPercentage": 30.875393221827125
+      }
+    },
+    "selected": {
+      "duration": 1856.1,
+      "distance": 2578,
+      "vegetation": {
+        "status": "available", "reason": null, "coverageRatio": 1, "coveragePercentage": 100,
+        "greenPercentage": 50.0666463059684
+      }
+    },
+    "additionalDurationSeconds": 25,
+    "greenChangePercentagePoints": 19.191253084141273
+  }
+}
+```
+
+(Recortado: cada ruta trae también su geometría, pasos, `exposure` y `windExposure`.)
 
 ## Ruta recomendada (PBI-9.1)
 
@@ -1104,6 +1199,43 @@ códigos controlados que `/api/routes/fastest`; si el cálculo de sombras supera
 pero no añade migraciones ni dependencias.
 
 ## Checklist de verificación manual
+
+### Nombres de ruta repetidos (#165)
+
+Con la migración aplicada (`npm run db:migrate`), el servidor arrancado y `$h` como en la checklist
+de la PBI-9.1.
+
+- [ ] `npm run db:migrate` escribe en el log cuántos nombres ha recortado y renombrado (0 en una BD
+      sin repetidos).
+- [ ] `POST /api/route-profiles` con `"name": " sombreada "` → `409` con "Ya tienes una ruta llamada
+      «Sombreada»." en `fields.name` y `existingId` (el id de Sombreada).
+- [ ] `PUT` de otra ruta con `"name": "SOLEADA"` → `409` con el `existingId` de Soleada; con su propio
+      nombre en mayúsculas → `200`.
+- [ ] `"name": "recomendada"` → `400` con "«Recomendada» es la ruta automática: elige otro nombre.".
+- [ ] `"name": "Rapida"` (sin tilde) se guarda: las tildes cuentan.
+- [ ] `npm run ci` y `npm run test:all` pasan (`uniqueRouteProfileNames.test.js`,
+      `routeProfiles.test.js` y la integración `routeProfiles.test.js`).
+
+### PBI-10 (fase B) - La vegetación en las rutas
+
+Con la vegetación calculada (`npm run compute:vegetation`, checklist de la fase A), la migración
+aplicada (`npm run db:migrate`), el servidor arrancado y `$h` como en la checklist de la PBI-9.1.
+
+- [ ] `POST /api/routes/weighted` de Plaza del Pilar (41.657204, -0.880394) a Plaza San Francisco
+      (41.641356, -0.895734) con `"weights": { "vegetation": 100 }` y `"time": "23:00"` →
+      `status: "selected"`; la rápida, 30,5 min y 30,9 % verde; la elegida, 30,9 min y 50,1 %
+      verde (`greenChangePercentagePoints` 19,2). Funciona de noche: no se calculan sombras.
+- [ ] Con `"vegetation": 30` elige la misma; con los pesos a 0, `fastest_only` y sin `vegetation`.
+- [ ] Con `"weights": { "shade": 50 }` las rutas traen también su `vegetation`; con solo
+      `"wind"`, `vegetation.reason` es `not_requested`.
+- [ ] Prueba real del 2026-11-12 en otros cinco trayectos con `"vegetation": 100` y +25 % / +40 %:
+      el % verde de la rápida sale entre el 28 % y el 64 % en cerca de 1 s, pero se queda la rápida
+      porque las alternativas de ORS apenas se diferencian en verde (Plaza de España → Parque
+      Grande: +4,9 puntos, por debajo de la mejora mínima de 5).
+- [ ] `POST /api/route-profiles` con `"weights": { "vegetation": 70 }` la guarda; `GET` devuelve
+      `vegetation` (0 en las rutas anteriores y en las predefinidas); `"vegetation": 101` → `400`.
+- [ ] `npm run ci` y `npm run test:all` pasan (integración: `routeProfiles.test.js` y
+      `vegetation.test.js`).
 
 ### PBI-9.1 - Ruta recomendada
 

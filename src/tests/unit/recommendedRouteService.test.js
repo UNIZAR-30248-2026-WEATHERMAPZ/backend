@@ -47,7 +47,7 @@ describe('recommended route service', () => {
         date: '2026-07-15',
         time: '13:00',
         timeZone: 'Europe/Madrid',
-        weights: { shade: 50, sun: 0, wind: 0 },
+        weights: { shade: 50, sun: 0, wind: 0, vegetation: 0 },
         maxDetourPercentage: 25
       },
       expect.objectContaining({ solarCalculator })
@@ -88,7 +88,12 @@ describe('recommended route service', () => {
 
     const result = await calculateRecommendedRoute(points, dependencies);
 
-    expect(weightedComparison.mock.calls[0][0].weights).toEqual({ shade: 0, sun: 0, wind: 0 });
+    expect(weightedComparison.mock.calls[0][0].weights).toEqual({
+      shade: 0,
+      sun: 0,
+      wind: 0,
+      vegetation: 0
+    });
     expect(result.recommendation).toMatchObject({
       criterion: 'weather_unavailable',
       weather: null
