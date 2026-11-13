@@ -9,6 +9,7 @@ describe('normalizeCurrentWeather', () => {
           temperature_2m: 21.4,
           wind_speed_10m: 12.2,
           wind_direction_10m: 275,
+          weather_code: 3,
           time: '2026-11-02T15:00'
         },
         current_units: {
@@ -28,6 +29,7 @@ describe('normalizeCurrentWeather', () => {
       windGustsUnit: 'km/h',
       windDirection: 275,
       windDirectionUnit: '°',
+      weatherCode: 3,
       time: '2026-11-02T15:00',
       timeZone: 'Europe/Madrid'
     });

@@ -522,8 +522,11 @@ para crearlo están en [deploy/README.md](deploy/README.md).
 
 `GET /api/weather/current` requiere sesión. Consulta Open-Meteo Forecast para el centro de Zaragoza
 (`41.6488, -0.8891`), solicita `temperature_2m`, `apparent_temperature`, `wind_speed_10m`,
-`wind_gusts_10m` y `wind_direction_10m`, y fija `timezone=Europe/Madrid`. Devuelve `{ weather }` con
-valores y unidades del proveedor, hora local del dato, zona horaria y fecha de consulta.
+`wind_gusts_10m`, `wind_direction_10m` y `weather_code`, y fija `timezone=Europe/Madrid`. Devuelve
+`{ weather }` con valores y unidades del proveedor, el código meteorológico WMO en `weatherCode`,
+hora local del dato, zona horaria y fecha de consulta. `weatherCode` es `null` si el proveedor no
+aporta el código; la respuesta meteorológica sigue siendo válida y el frontend muestra que el
+estado del cielo no está disponible.
 `apparentTemperature` (sensación térmica) y `windGusts` (rachas) se añadieron en la PBI-9.1 para la
 ruta recomendada y son opcionales: valen `null` si el proveedor no los da, sin que la respuesta deje
 de ser válida. Una caché en memoria de cinco minutos evita llamadas
@@ -536,8 +539,9 @@ curl http://localhost:3000/api/weather/current \\
 ```
 
 La aplicación debe conservar la atribución y licencia de Open-Meteo cuando presente estos datos.
-Esta PBI añade el servicio backend; no añade un panel meteorológico en el frontend ni incorpora
-todavía el viento al coste de las rutas (la PBI-8.1 lo usa para la exposición por tramo).
+La PBI-7 añade el servicio backend y la PBI-17 muestra estos datos en el panel meteorológico del
+mapa en el frontend. El viento se usa para la exposición por tramo (PBI-8.1), no se añade aquí al
+coste de las rutas.
 
 ## Exposición al viento por tramo (PBI-8.1)
 

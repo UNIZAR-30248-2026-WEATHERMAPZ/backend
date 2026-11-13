@@ -10,7 +10,7 @@ async function getCurrentWeather() {
   // when present.
   url.searchParams.set(
     'current',
-    'temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m'
+    'temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m,weather_code'
   );
   url.searchParams.set('timezone', 'Europe/Madrid');
   const controller = new AbortController();

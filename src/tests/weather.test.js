@@ -27,6 +27,7 @@ describe('GET /api/weather/current', () => {
           temperature_2m: 18.5,
           wind_speed_10m: 7.2,
           wind_direction_10m: 240,
+          weather_code: 3,
           time: '2026-11-02T15:00'
         },
         current_units: {
@@ -45,6 +46,7 @@ describe('GET /api/weather/current', () => {
       temperature: 18.5,
       windSpeed: 7.2,
       windDirection: 240,
+      weatherCode: 3,
       apparentTemperature: null,
       windGusts: null,
       timeZone: 'Europe/Madrid'
@@ -54,7 +56,7 @@ describe('GET /api/weather/current', () => {
     const url = new URL(global.fetch.mock.calls[0][0]);
     expect(url.origin + url.pathname).toBe('https://api.open-meteo.com/v1/forecast');
     expect(url.searchParams.get('current')).toBe(
-      'temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m'
+      'temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m,weather_code'
     );
     expect(url.searchParams.get('timezone')).toBe('Europe/Madrid');
   });
