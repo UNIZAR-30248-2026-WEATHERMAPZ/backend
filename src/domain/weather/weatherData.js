@@ -32,6 +32,7 @@ function normalizeCurrentWeather(payload) {
     windGustsUnit: units?.wind_gusts_10m || 'km/h',
     windDirection,
     windDirectionUnit: units?.wind_direction_10m || '°',
+    weatherCode: optionalNumber(current.weather_code),
     time,
     timeZone: payload.timezone || 'Europe/Madrid'
   };
