@@ -149,7 +149,9 @@ describe('weighted route selection', () => {
       expect(selectWeightedRoute(candidates, shade, { maxExtraSeconds: 0 })).toMatchObject({
         status: 'over_extra_time',
         fastest: { id: 'fast' },
-        selected: null
+        selected: null,
+        // The shortest better route ("middle") takes 40 s more (PBI-19).
+        betterAlternativeExtraSeconds: 40
       });
     });
 

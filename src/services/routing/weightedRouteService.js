@@ -58,7 +58,7 @@ async function resolveWind(requested, weights, weather) {
  * Each route with its wind exposure. Every straight piece takes the openness of the nearest street
  * segment (PBI-8.3), all in one query; with calm wind the exposure is 0 anyway and it is skipped.
  */
-async function withWindExposures(routes, wind, opennessRepository) {
+async function withWindExposures(routes, wind, opennessRepository, evidence = null) {
   if (!wind) {
     return routes.map((route) => ({
       ...route,
@@ -81,6 +81,9 @@ async function withWindExposures(routes, wind, opennessRepository) {
       openness: openness.length ? (openness[offset + pieceIndex] ?? DEFAULT_OPENNESS) : undefined
     }));
     offset += pieces.length;
+    // The wind of each piece is kept for the explanation of the route (PBI-19).
+    if (evidence && Number.isInteger(route.routeIndex))
+      evidence.windPieces.set(route.routeIndex, pieces);
     return { ...route, windExposure: calculatePiecesWindExposure(pieces, wind) };
   });
 }
@@ -120,6 +123,9 @@ async function calculateWeightedRouteComparison(
     alternativesProvider = getAlternativeWalkingRoutes,
     weather = getZaragozaWeather,
     opennessRepository = defaultOpenness,
+    // Optional: filled with what was measured (wind, wind of each piece, shade of each segment) so the
+    // explanation of the route can reuse it (PBI-19). Not part of the result.
+    evidence = null,
     ...dependencies
   } = {}
 ) {
@@ -131,6 +137,7 @@ async function calculateWeightedRouteComparison(
     minimumImprovementPercentagePoints: MIN_IMPROVEMENT_PERCENTAGE_POINTS
   };
   const wind = await resolveWind(requestedWind, weights, weather);
+  if (evidence) Object.assign(evidence, { wind, windPieces: new Map() });
 
   if (!hasEnvironmentalWeight(weights)) {
     const fastest = await fastestRouteCalculator(input);
@@ -155,10 +162,11 @@ async function calculateWeightedRouteComparison(
     includeShade: hasShadeWeight(weights),
     // The green percentage is also shown when shade or sun weigh: their segments are already known.
     includeVegetation: hasVegetationWeight(weights) || hasShadeWeight(weights),
+    evidence,
     ...dependencies
   });
   const selection = selectWeightedRoute(
-    await withWindExposures(routes, wind, opennessRepository),
+    await withWindExposures(routes, wind, opennessRepository, evidence),
     weights,
     limit.selection
   );
@@ -176,6 +184,7 @@ async function calculateWeightedRouteComparison(
     shadeChangePercentagePoints: isSelected ? selection.shadeChangePercentagePoints : null,
     windChangePoints: isSelected ? selection.windChangePoints : null,
     greenChangePercentagePoints: isSelected ? selection.greenChangePercentagePoints : null,
+    betterAlternativeExtraSeconds: selection.betterAlternativeExtraSeconds ?? null,
     candidatesEvaluated: routes.length,
     strategy
   };

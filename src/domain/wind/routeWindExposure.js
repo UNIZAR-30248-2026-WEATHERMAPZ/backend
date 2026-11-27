@@ -40,7 +40,8 @@ function routePieces(geometry) {
         (coordinates[index - 1][0] + coordinates[index][0]) / 2,
         (coordinates[index - 1][1] + coordinates[index][1]) / 2
       ];
-      pieces.push({ bearingDeg, lengthM, midpoint });
+      // index: the coordinate where the piece ends, to find the step of the route it belongs to.
+      pieces.push({ bearingDeg, lengthM, midpoint, index });
     }
   }
   return pieces;

@@ -27,7 +27,10 @@ describe('POST /api/routes/preferred (PBI-18, ADR-036)', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('calculates the weighted route of the answers', async () => {
-    calculateWeightedRouteComparison.mockResolvedValue({ status: 'over_extra_time' });
+    calculateWeightedRouteComparison.mockResolvedValue({
+      status: 'over_extra_time',
+      betterAlternativeExtraSeconds: 690
+    });
 
     const response = await request(createApp()).post('/api/routes/preferred').send(body);
 
@@ -35,7 +38,13 @@ describe('POST /api/routes/preferred (PBI-18, ADR-036)', () => {
     expect(response.body).toEqual({
       comparison: {
         status: 'over_extra_time',
-        preferences: { ...body.preferences, hasPreference: true }
+        betterAlternativeExtraSeconds: 690,
+        preferences: { ...body.preferences, hasPreference: true },
+        // 11.5 minutes more do not fit in 10: the next option is 15 (PBI-19).
+        explanation: {
+          status: 'over_extra_time',
+          suggestion: { kind: 'more_minutes', minutes: 15 }
+        }
       }
     });
     expect(calculateWeightedRouteComparison).toHaveBeenCalledWith(
@@ -45,7 +54,7 @@ describe('POST /api/routes/preferred (PBI-18, ADR-036)', () => {
         weights: { shade: 50, sun: 0, wind: 0, vegetation: 50 },
         extraMinutes: 10
       }),
-      {}
+      { evidence: {} }
     );
   });
 

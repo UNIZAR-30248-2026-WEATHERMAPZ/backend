@@ -41,7 +41,9 @@ async function evaluateRouteCandidates(
     solarCalculator = calculateSolarPosition,
     vegetationRepository = defaultVegetationRepository,
     includeShade = true,
-    includeVegetation = false
+    includeVegetation = false,
+    // Filled with what was measured, for the explanation of the route (PBI-19): not part of the result.
+    evidence = null
   } = {}
 ) {
   const timeZone = validateShadedRouteRequest(input, importConfig.zaragozaBbox);
@@ -83,6 +85,9 @@ async function evaluateRouteCandidates(
   const exposuresBySegmentId = new Map(
     (exposureResult?.segments || []).map((exposure) => [Number(exposure.segmentId), exposure])
   );
+  if (evidence && exposureResult?.status === 'calculated') {
+    Object.assign(evidence, { segmentExposures: exposuresBySegmentId });
+  }
   const greenRatios = includeVegetation
     ? await vegetationRepository.findGreenRatios(segmentIds)
     : null;
