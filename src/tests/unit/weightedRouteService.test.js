@@ -379,6 +379,20 @@ describe('weighted route service', () => {
       expect(weather).not.toHaveBeenCalled();
     });
 
+    it('keeps the wind and the pieces of each route for the explanation, outside the result (PBI-19)', async () => {
+      const evidence = {};
+      const result = await calculateWeightedRouteComparison(
+        { ...input, weights: { wind: 100 }, wind: northWind },
+        { ...dependencies, evidence }
+      );
+
+      expect(evidence.wind).toMatchObject(northWind);
+      expect(evidence.windPieces.get(0)).toHaveLength(1);
+      expect(evidence.windPieces.get(1).map((piece) => piece.index)).toEqual([1, 2]);
+      expect(evidence.segmentExposures).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain('windPieces');
+    });
+
     it('keeps the fastest route with the wind weight at 0', async () => {
       fastestRouteCalculator.mockResolvedValue({
         geometry: straightNorth,

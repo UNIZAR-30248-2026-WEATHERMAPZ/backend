@@ -100,12 +100,16 @@ function selectWeightedRoute(
   if (!selected || weightedCost(selected, weights) >= weightedCost(fastest, weights)) {
     // There are routes that suit the preferences better, but all of them take longer than the extra
     // time the user accepts (ADR-036): the fastest one is shown and the user is told why.
-    const isOverExtraTime =
-      maxExtraSeconds !== null && better.some((route) => route.duration > maximumDuration);
+    const tooLong = better.filter((route) => route.duration > maximumDuration);
+    const isOverExtraTime = maxExtraSeconds !== null && tooLong.length > 0;
     return {
       status: isOverExtraTime ? 'over_extra_time' : 'no_better_alternative',
       fastest,
-      selected: null
+      selected: null,
+      // How much longer the shortest of them is: the extra time that would let it in (PBI-19).
+      betterAlternativeExtraSeconds: isOverExtraTime
+        ? Math.min(...tooLong.map((route) => route.duration)) - fastest.duration
+        : null
     };
   }
 

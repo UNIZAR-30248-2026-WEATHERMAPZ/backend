@@ -18,16 +18,18 @@ const answers = (overrides = {}) => ({
 
 describe('preferred route service (PBI-18, ADR-036)', () => {
   const weightedComparison = jest.fn();
+  const explain = jest.fn();
 
   beforeEach(() => {
     jest.clearAllMocks();
     weightedComparison.mockResolvedValue({ status: 'selected' });
+    explain.mockResolvedValue({ status: 'selected', time: { extraSeconds: 60 } });
   });
 
   it('turns the answers into the weights of the weighted route and passes the minutes', async () => {
     const result = await calculatePreferredRoute(
       { ...points, preferences: answers({ sunShade: 'shade', avoidWind: true, extraMinutes: 10 }) },
-      { weightedComparison }
+      { weightedComparison, explain }
     );
 
     expect(weightedComparison).toHaveBeenCalledWith(
@@ -37,22 +39,40 @@ describe('preferred route service (PBI-18, ADR-036)', () => {
         weights: { shade: 50, sun: 0, wind: 50, vegetation: 0 },
         extraMinutes: 10
       },
-      {}
+      { evidence: {} }
     );
     expect(result).toEqual({
       status: 'selected',
       preferences: {
         ...answers({ sunShade: 'shade', avoidWind: true, extraMinutes: 10 }),
         hasPreference: true
-      }
+      },
+      explanation: { status: 'selected', time: { extraSeconds: 60 } }
     });
   });
 
-  it('with everything indifferent asks for weights at 0 (the fastest route)', async () => {
+  it('explains the comparison with the evidence the weighted comparison filled (PBI-19)', async () => {
+    weightedComparison.mockImplementation(async (_input, { evidence }) => {
+      Object.assign(evidence, { wind: { speedKmh: 40, directionDeg: 300 } });
+      return { status: 'selected' };
+    });
+    await calculatePreferredRoute(
+      { ...points, preferences: answers({ avoidWind: true }) },
+      { weightedComparison, explain }
+    );
+    expect(explain).toHaveBeenCalledWith({ status: 'selected' }, answers({ avoidWind: true }), {
+      wind: { speedKmh: 40, directionDeg: 300 }
+    });
+  });
+
+  it('with everything indifferent asks for weights at 0 (the fastest route), without explanation', async () => {
+    weightedComparison.mockResolvedValue({ status: 'fastest_only' });
     const result = await calculatePreferredRoute(
       { ...points, preferences: answers() },
-      { weightedComparison }
+      { weightedComparison, explain }
     );
+    expect(result.explanation).toBeNull();
+    expect(explain).not.toHaveBeenCalled();
 
     expect(weightedComparison.mock.calls[0][0].weights).toEqual({
       shade: 0,

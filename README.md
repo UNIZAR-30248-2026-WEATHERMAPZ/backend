@@ -947,6 +947,31 @@ más abajo: `status`, `weights`, `wind`, `fastest`, `selected`, `additionalDurat
 `candidatesEvaluated`, `strategy`) más `preferences` (las respuestas y `hasPreference`).
 `POST /api/routes/weighted` ya no existe (`404`): los pesos no forman parte de la API.
 
+**Explicación (PBI-19, ADR-038).** `explanation` es `null` con `fastest_only`. Con una ruta elegida:
+
+```json
+{
+  "status": "selected",
+  "time": { "durationSeconds": 1120, "fastestDurationSeconds": 1083, "extraSeconds": 37 },
+  "sunShade": {
+    "status": "available", "kind": "shade",
+    "streets": [{ "street": "Calle del Doctor Horno Alcorta", "percentage": 95 }],
+    "instead": { "street": "Calle de Ávila", "percentage": 39 }
+  },
+  "wind": { "status": "unavailable", "reason": "not_requested" },
+  "parks": { "status": "unavailable", "reason": "not_requested" },
+  "suggestion": null
+}
+```
+
+`wind` disponible trae `avoided` y `via` (calles con su exposición) y `parks`, `named`,
+`moreNamedCount` y `unnamedCount`. Cada parte no disponible dice por qué (`not_requested`,
+`no_relevant_streets`, `calm`, `no_shade_data`, `no_parks`, `error`…). Sin ruta mejor:
+`{ "status": "over_extra_time", "suggestion": { "kind": "more_minutes", "minutes": 15 } }`
+(`kind`: `more_minutes`, `too_long`, `other_time`, `without_sun_shade` u `other_preference`), y la
+comparación trae `betterAlternativeExtraSeconds` con `over_extra_time`. Solo se usa lo que el cálculo
+midió: el viento de cada trozo, la sombra de cada tramo y los pasos de ORS con nombre.
+
 ### `GET /api/route-preferences/weather` — «Según el tiempo de hoy» (PBI-21)
 
 Con sesión. Qué respuestas marca el tiempo de ahora, con la regla y los umbrales de la ruta
@@ -1595,6 +1620,17 @@ códigos controlados que `/api/routes/fastest`; si el cálculo de sombras supera
 pero no añade migraciones ni dependencias.
 
 ## Checklist de verificación manual
+
+### PBI-19 - Explicación de la ruta en lenguaje claro
+
+- [ ] `POST /api/routes/preferred` de Delicias (41.6487, -0.9043) a la plaza del Portillo (41.6505,
+      -0.8916) con `sunShade` `shade`, el 2026-07-10 a las 17:00: `explanation.sunShade` nombra Calle
+      del Doctor Horno Alcorta (en local, 2026-11-26).
+- [ ] Con `preferParks`, `explanation.parks` nombra zonas verdes; con todo indiferente, `null`.
+- [ ] Con `over_extra_time`, `betterAlternativeExtraSeconds` y una sugerencia de minutos.
+- [ ] `npm run ci` pasa (`routeExplanation.test.js`, `routeExplanationService.test.js`,
+      `weightedRouteSelection.test.js`, `weightedRouteService.test.js` y `preferredRoute.test.js`).
+
 
 ### PBI-21 - Según el tiempo de hoy
 
